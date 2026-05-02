@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>金融新闻分析 · 展示中心</title>
+  <!-- Tabler Core CSS (MIT) https://github.com/tabler/tabler -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/css/tabler.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.44.0/tabler-icons.min.css">
+  <style>
+    .news-card { cursor: pointer; transition: background-color .15s; }
+    .news-card:hover { background-color: var(--tblr-bg-surface-secondary); }
+    .news-card.active { background-color: rgba(var(--tblr-primary-rgb), 0.1); border-left: 3px solid var(--tblr-primary); }
+    .direction-badge--up { color: var(--tblr-success); }
+    .direction-badge--down { color: var(--tblr-danger); }
+    .direction-badge--flat { color: var(--tblr-secondary); }
+    #detail-panel { min-height: 400px; }
+    .detail-section { margin-bottom: 1.25rem; }
+    .detail-section h6 { color: var(--tblr-muted); margin-bottom: .5rem; }
+    .detail-section .detail-label { font-weight: 700; }
+    .keyword-tag { margin: 2px 4px 2px 0; }
+    .detail-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.75rem; }
+    .detail-title-row .detail-title { font-weight: 700; flex: 1; min-width: 0; }
+    .detail-title-row .detail-direction { flex-shrink: 0; white-space: nowrap; }
+    .detail-origin { font-size: 0.9rem; color: var(--tblr-muted); line-height: 1.5; margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--tblr-border-color); }
+    /* 手机端：新闻列表可收起，保留约两行并可上下翻动 */
+    @media (max-width: 991.98px) {
+      #news-list-wrap { max-height: 70vh; overflow-y: auto; transition: max-height 0.25s ease; -webkit-overflow-scrolling: touch; }
+      #news-list-wrap.collapsed { max-height: 6.5rem; }
+      #news-list-wrap .list-group { max-height: none; }
+      .mobile-toggle { display: inline-flex !important; }
+    }
+    @media (min-width: 992px) {
+      .mobile-toggle { display: none !important; }
+    }
+    .mobile-toggle { display: none; align-items: center; gap: 0.25rem; }
+    .list-scroll-desktop { max-height: 70vh; overflow-y: auto; }
+    @media (max-width: 991.98px) {
+      .list-scroll-desktop { max-height: none; overflow: visible; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="navbar navbar-expand-md navbar-light d-print-none">
+      <div class="container-xl">
+        <h1 class="navbar-brand navbar-brand-autodark d-none-navbar-horizontal pe-0 pe-md-3">
+          <a href=".">
+            <span class="text-primary me-2"><i class="ti ti-news"></i></span>
+            金融新闻分析
+          </a>
+        </h1>
+        <div class="navbar-nav flex-row order-md-last">
+          <div class="nav-item d-flex align-items-center">
+            <span class="text-secondary" id="stats-bar">加载统计...</span>
+          </div>
+        </div>
+      </div>
+    </header>
+    <div class="page-wrapper">
+      <div class="page-body">
+        <div class="container-xl">
+          <div class="row row-deck row-cards">
+            <div class="col-12 col-lg-5">
+              <div class="card">
+                <div class="card-header d-flex align-items-center">
+                  <h3 class="card-title mb-0 me-2">最新分析新闻</h3>
+                  <div class="card-actions ms-auto d-flex align-items-center">
+                    <button type="button" class="btn btn-sm btn-ghost-secondary mobile-toggle" id="list-toggle" aria-label="收起/展开列表">
+                      <i class="ti ti-chevron-down" id="list-toggle-icon"></i>
+                      <span id="list-toggle-text">收起</span>
+                    </button>
+                    <span class="badge bg-azure-lt ms-1" id="list-count">0</span>
+                  </div>
+                </div>
+                <div id="news-list-wrap">
+                  <div class="list-group list-group-flush list-group-hoverable list-scroll-desktop" id="news-list">
+                    <div class="list-group-item text-center text-secondary py-5" id="list-placeholder">
+                      加载中...
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-lg-7">
+              <div class="card" id="detail-card">
+                <div class="card-header">
+                  <h3 class="card-title">分析详情</h3>
+                </div>
+                <div class="card-body" id="detail-panel">
+                  <p class="text-secondary mb-0">请从左侧选择一条新闻查看详细分析。</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <footer class="footer footer-transparent d-print-none">
+      <div class="container-xl">
+        <div class="row text-center align-items-center">
+          <div class="col-12 col-lg-auto mt-3 mt-lg-0">
+            <span class="text-secondary">内容由AI生成，仅供学习参考，不构成投资建议</span>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/js/tabler.min.js"></script>
+  <script>
+    (function () {
+      const DATA_URL = 'data/feed.json';
+      let feed = { stats: {}, items: [], details: {} };
+      let currentId = null;
+
+      function directionClass(d) {
+        if (d == null) return 'direction-badge--flat';
+        if (d > 0) return 'direction-badge--up';
+        if (d < 0) return 'direction-badge--down';
+        return 'direction-badge--flat';
+      }
+      function directionText(d, impact) {
+        if (d == null) return '中性';
+        if (d > 0) return '利好' + (impact ? ' · ' + impact : '');
+        if (d < 0) return '利空' + (impact ? ' · ' + impact : '');
+        return '中性';
+      }
+      function formatDt(iso) {
+        if (!iso) return '';
+        return iso.replace('T', ' ').slice(0, 19);
+      }
+      function formatBeijingNow() {
+        var now = new Date();
+        var bj = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+        var y = bj.getUTCFullYear();
+        var m = String(bj.getUTCMonth() + 1).padStart(2, '0');
+        var d = String(bj.getUTCDate()).padStart(2, '0');
+        var hh = String(bj.getUTCHours()).padStart(2, '0');
+        var mm = String(bj.getUTCMinutes()).padStart(2, '0');
+        var ss = String(bj.getUTCSeconds()).padStart(2, '0');
+        return y + '-' + m + '-' + d + ' ' + hh + ':' + mm + ':' + ss;
+      }
+
+      function renderStats() {
+        const s = feed.stats;
+        const el = document.getElementById('stats-bar');
+        const refresh = formatBeijingNow();
+        el.textContent = '已分析 ' + (s.total_news || 0) + ' 条';
+        if (s.latest_news_time) {
+          el.textContent += ' · 最新数据 ' + formatDt(s.latest_news_time);
+        }
+        el.textContent += ' · 刷新时间(北京) ' + refresh;
+      }
+
+      function renderList() {
+        const listEl = document.getElementById('news-list');
+        const placeholder = document.getElementById('list-placeholder');
+        const countEl = document.getElementById('list-count');
+        if (!feed.items || feed.items.length === 0) {
+          if (placeholder) placeholder.textContent = '暂无数据，请等待同步脚本更新。';
+          if (countEl) countEl.textContent = '0';
+          return;
+        }
+        placeholder?.remove();
+        countEl.textContent = feed.items.length;
+        listEl.innerHTML = feed.items.map(function (item) {
+          const active = item.id === currentId ? ' active' : '';
+          return (
+            '<div class="list-group-item news-card' + active + '" data-id="' + item.id + '">' +
+              '<div class="row align-items-center">' +
+                '<div class="col text-truncate">' +
+                  '<div class="text-reset d-block">' + escapeHtml(item.title || '') + '</div>' +
+                  '<div class="d-block text-secondary text-truncate mt-1 small">' +
+                    escapeHtml(item.source || '') + ' · ' + formatDt(item.news_datetime) +
+                  '</div>' +
+                '</div>' +
+                '<div class="col-auto">' +
+                  '<span class="small ' + directionClass(item.direction) + '">' +
+                    escapeHtml(directionText(item.direction, item.impact)) +
+                  '</span>' +
+                '</div>' +
+              '</div>' +
+            '</div>'
+          );
+        }).join('');
+
+        listEl.querySelectorAll('.news-card').forEach(function (el) {
+          el.addEventListener('click', function () {
+            currentId = parseInt(el.dataset.id, 10);
+            listEl.querySelectorAll('.news-card').forEach(function (c) { c.classList.remove('active'); });
+            el.classList.add('active');
+            renderDetail(currentId);
+          });
+        });
+
+        if (currentId == null && feed.items.length > 0) {
+          currentId = feed.items[0].id;
+          listEl.querySelector('.news-card[data-id="' + currentId + '"]')?.classList.add('active');
+          renderDetail(currentId);
+        }
+      }
+
+      function escapeHtml(s) {
+        if (s == null) return '';
+        const div = document.createElement('div');
+        div.textContent = s;
+        return div.innerHTML;
+      }
+
+      function renderDetail(id) {
+        const panel = document.getElementById('detail-panel');
+        const d = feed.details && feed.details[id];
+        if (!d) {
+          panel.innerHTML = '<p class="text-secondary">未找到该条分析详情。</p>';
+          return;
+        }
+        const dirHtml = '<span class="small ' + directionClass(d.direction) + '">' + escapeHtml(directionText(d.direction, d.impact)) + '</span>';
+        const parts = [];
+        parts.push('<div class="detail-title-row"><div class="detail-title">' + escapeHtml(d.title || '') + '</div><div class="detail-direction">' + dirHtml + '</div></div>');
+        if (d.content) {
+          parts.push('<div class="detail-section"><h6>原文</h6><div class="detail-origin">' + escapeHtml(d.content) + '</div></div>');
+        }
+        parts.push('<div class="detail-section"><h6>核心结论</h6><p class="mb-0">' + escapeHtml(d.conclusion || '无') + '</p></div>');
+        parts.push('<div class="detail-section"><h6>投资启示</h6><p class="mb-0">' + escapeHtml(d.insight || '无') + '</p></div>');
+        const timeParts = [];
+        if (d.shorttime) timeParts.push('<span class="detail-label">短期</span>：' + escapeHtml(d.shorttime));
+        if (d.midtime) timeParts.push('<span class="detail-label">中期</span>：' + escapeHtml(d.midtime));
+        if (d.longtime) timeParts.push('<span class="detail-label">长期</span>：' + escapeHtml(d.longtime));
+        parts.push('<div class="detail-section"><h6>时间维度</h6><p class="mb-0">' + (timeParts.length ? timeParts.join('<br>') : '无') + '</p></div>');
+        const dimParts = [];
+        if (d.interest) dimParts.push('<span class="detail-label">实际利率</span>：' + escapeHtml(d.interest));
+        if (d.dollar) dimParts.push('<span class="detail-label">美元指数</span>：' + escapeHtml(d.dollar));
+        if (d.warrisk) dimParts.push('<span class="detail-label">地缘政治风险</span>：' + escapeHtml(d.warrisk));
+        if (d.liquidity) dimParts.push('<span class="detail-label">流动性</span>：' + escapeHtml(d.liquidity));
+        if (d.emotion) dimParts.push('<span class="detail-label">市场情绪</span>：' + escapeHtml(d.emotion));
+        parts.push('<div class="detail-section"><h6>各维度分析</h6><p class="mb-0">' + (dimParts.length ? dimParts.join('<br>') : '无') + '</p></div>');
+        if (Array.isArray(d.keyword) && d.keyword.length) {
+          parts.push('<div class="detail-section"><h6>关键词</h6><div>' +
+            d.keyword.map(function (k) { return '<span class="badge bg-outline-secondary keyword-tag">' + escapeHtml(k) + '</span>'; }).join('') +
+            '</div></div>');
+        }
+        panel.innerHTML = parts.join('');
+      }
+
+      function loadFeed() {
+        fetch(DATA_URL + '?t=' + Date.now())
+          .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+          .then(function (data) {
+            feed = data;
+            renderStats();
+            renderList();
+          })
+          .catch(function () {
+            const el = document.getElementById('stats-bar');
+            el.textContent = '无法加载 data/feed.json，请确认同步脚本已运行。'
+              + ' · 刷新时间(北京) ' + formatBeijingNow();
+            const ph = document.getElementById('list-placeholder');
+            if (ph) {
+              ph.textContent = '加载失败，请检查 data/feed.json 是否存在。';
+            }
+          });
+      }
+
+      function initListToggle() {
+        var wrap = document.getElementById('news-list-wrap');
+        var btn = document.getElementById('list-toggle');
+        var icon = document.getElementById('list-toggle-icon');
+        var text = document.getElementById('list-toggle-text');
+        if (!wrap || !btn) return;
+        var isCollapsed = window.innerWidth < 992;
+        if (isCollapsed) wrap.classList.add('collapsed');
+        function updateLabel() {
+          var c = wrap.classList.contains('collapsed');
+          icon.className = c ? 'ti ti-chevron-up' : 'ti ti-chevron-down';
+          text.textContent = c ? '展开' : '收起';
+        }
+        btn.addEventListener('click', function () {
+          wrap.classList.toggle('collapsed');
+          updateLabel();
+        });
+        updateLabel();
+        window.addEventListener('resize', function () {
+          if (window.innerWidth >= 992) wrap.classList.remove('collapsed');
+          updateLabel();
+        });
+      }
+
+      loadFeed();
+      setInterval(loadFeed, 10000);
+      document.addEventListener('DOMContentLoaded', initListToggle);
+      if (document.readyState !== 'loading') initListToggle();
+    })();
+  </script>
+</body>
+</html>
