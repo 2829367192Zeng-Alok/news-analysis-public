@@ -1,0 +1,2 @@
+# Shell scripts: always LF on checkout so ECS/Linux runs without \r errors
+*.sh text eol=lf
