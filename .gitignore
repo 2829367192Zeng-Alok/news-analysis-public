@@ -1,2 +1,26 @@
 .env
 logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Runtime CSV exports (ECS / local pipelines regenerate from APIs & DB)
+news/*.csv
+
+# Generated reports (pipeline / analysis runs)
+analysis_report.txt
+pipeline_report.txt
+
+# Web display runtime output (synced from DB)
+web_display/data/*.json
+web_display/.sync_state.json
