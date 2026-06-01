@@ -7,7 +7,7 @@ ECS 部署时请将 DB_HOST 设为云数据库内网地址（同地域/VPC 内�
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from sqlalchemy.engine import URL
 
@@ -94,6 +94,83 @@ class TushareConfig:
     token: str = os.getenv("TUSHARE_TOKEN", "")
 
 
+def _parse_qq_group_ids(raw: str) -> tuple[int, ...]:
+    raw = (raw or "").strip()
+    if not raw:
+        return ()
+    out: list[int] = []
+    for part in raw.replace(";", ",").split(","):
+        p = part.strip()
+        if p:
+            out.append(int(p))
+    return tuple(out)
+
+
+def _parse_feishu_webhook_urls(raw: str) -> tuple[str, ...]:
+    """支持逗号/分号分隔多个 Webhook URL。"""
+    raw = (raw or "").strip()
+    if not raw:
+        return ()
+    urls: list[str] = []
+    for part in raw.replace(";", ",").split(","):
+        p = part.strip()
+        if p:
+            urls.append(p)
+    return tuple(urls)
+
+
+@dataclass
+class FeishuWebhookConfig:
+    """流水线完成后通过飞书群自定义机器人 Webhook 推送分析摘要。"""
+
+    enabled: bool = os.getenv("FEISHU_WEBHOOK_ENABLED", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    web_base_url: str = os.getenv(
+        "FEISHU_PUSH_WEB_BASE_URL",
+        os.getenv(
+            "QQ_PUSH_WEB_BASE_URL",
+            "https://goldnews-analysis.easypus.com",
+        ),
+    ).strip().rstrip("/")
+    conclusion_max_len: int = int(
+        os.getenv("FEISHU_PUSH_CONCLUSION_MAX_LEN", os.getenv("QQ_PUSH_CONCLUSION_MAX_LEN", "400"))
+    )
+    send_delay_ms: int = int(
+        os.getenv("FEISHU_PUSH_SEND_DELAY_MS", os.getenv("QQ_PUSH_SEND_DELAY_MS", "400"))
+    )
+    webhook_urls: tuple[str, ...] = field(
+        default_factory=lambda: _parse_feishu_webhook_urls(os.getenv("FEISHU_WEBHOOK_URL", "")),
+    )
+
+
+@dataclass
+class QQPushConfig:
+    """流水线完成后经 OneBot HTTP（go-cqhttp）向 QQ 群推送分析摘要。"""
+
+    enabled: bool = os.getenv("QQ_PUSH_ENABLED", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    onebot_http_base: str = os.getenv(
+        "QQ_ONEBOT_HTTP_URL",
+        "http://127.0.0.1:5700",
+    ).strip().rstrip("/")
+    access_token: str = os.getenv("QQ_ONEBOT_ACCESS_TOKEN", "").strip()
+    web_base_url: str = os.getenv(
+        "QQ_PUSH_WEB_BASE_URL",
+        "https://goldnews-analysis.easypus.com",
+    ).strip().rstrip("/")
+    conclusion_max_len: int = int(os.getenv("QQ_PUSH_CONCLUSION_MAX_LEN", "400"))
+    send_delay_ms: int = int(os.getenv("QQ_PUSH_SEND_DELAY_MS", "400"))
+    group_ids: tuple[int, ...] = field(
+        default_factory=lambda: _parse_qq_group_ids(os.getenv("QQ_GROUP_IDS", "")),
+    )
+
+
 @dataclass
 class DoubaoConfig:
     """豆包（火山引擎 Ark）Responses API 配置。"""
@@ -117,6 +194,10 @@ class Settings:
     db = DatabaseConfig()
     tushare = TushareConfig()
     doubao = DoubaoConfig()
+    feishu_webhook = FeishuWebhookConfig()
+    qq_push = QQPushConfig()
+    # 宏观基线文件（YAML/JSON）；不设则 macro_baseline.load_macro_baseline 使用默认查找顺序
+    macro_baseline_path: str = os.getenv("MACRO_BASELINE_PATH", "").strip()
 
 
 settings = Settings()

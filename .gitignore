@@ -24,3 +24,16 @@ pipeline_report.txt
 # Web display runtime output (synced from DB)
 web_display/data/*.json
 web_display/.sync_state.json
+
+# go-cqhttp 二进制与运行时数据
+go-cqhttp/go-cqhttp
+go-cqhttp/go-cqhttp.exe
+go-cqhttp/*.bat
+go-cqhttp/data/
+go-cqhttp/logs/
+go-cqhttp/session.token
+
+# 调试与临时脚本（移入 scripts/ 目录后也不纳入版本控制）
+scripts/debug_*.py
+scripts/test_*.py
+scripts/fix_*.py

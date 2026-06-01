@@ -19,6 +19,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from utils import now_beijing_naive
 
 
+# TODO: Reference 字段为历史遗留命名（首字母大写），后续若要统一命名需设计兼容迁移方案
 Base = declarative_base()
 
 
@@ -91,7 +92,8 @@ class NewsAnalysisDetail(Base):
 
     # 关键词和参考内容，使用 JSON 存储 array
     keyword = Column(JSON)
-    Reference = Column(JSON)
+    # TODO: 历史遗留首字母大写命名，数据库列名保持不变，勿擅自迁移
+    Reference = Column(JSON, comment="参考内容列表（历史遗留字段名，勿改列名）")
 
     interest = Column(Text)
     dollar = Column(Text)
@@ -132,5 +134,22 @@ SessionLocal = scoped_session(sessionmaker(bind=engine, autoflush=False, autocom
 
 
 def get_db_session():
+    """
+    返回当前线程绑定的 scoped_session 实例。
+    使用完毕后请调用 remove_db_session() 归还连接，
+    或直接使用 contextmanager 版（见 app.py 的 _db_session）。
+    """
     return SessionLocal()
+
+
+def remove_db_session() -> None:
+    """
+    释放当前线程的 scoped_session，归还连接池。
+    应在每个请求结束或后台任务完成后调用。
+    Flask 应用中可在 teardown_appcontext 中注册：
+        @app.teardown_appcontext
+        def shutdown_session(exc=None):
+            remove_db_session()
+    """
+    SessionLocal.remove()
 

@@ -1,16 +1,48 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import Generator, List, Dict, Any, Optional
 
-from flask import Flask, jsonify, render_template
-from sqlalchemy import select, func
+from flask import Flask, jsonify, request, render_template
 
 from models import NewsAnalysisDetail, get_db_session
 
 
+@contextmanager
+def _db_session() -> Generator:
+    """在 with 块内自动关闭 Session，异常时 rollback。"""
+    session = get_db_session()
+    try:
+        yield session
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def _parse_dt(value: Optional[str]) -> Optional[datetime]:
+    """将 ISO 格式字符串解析为 datetime，失败返回 None。"""
+    if not value:
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    return None
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
+    from models import remove_db_session
+
+    @app.teardown_appcontext
+    def _shutdown_session(exc=None):
+        """每个请求结束后释放 scoped_session，归还连接池。"""
+        remove_db_session()
 
     @app.route("/")
     def index():
@@ -18,13 +50,35 @@ def create_app() -> Flask:
 
     @app.route("/api/news")
     def api_news():
-        session = get_db_session()
+        """
+        查询分析结果列表。
+
+        Query params:
+          limit  : 返回条数，默认 50，最大 200
+          before : ISO 时间字符串，只返回 news_datetime < before 的记录（向前翻页）
+          after  : ISO 时间字符串，只返回 news_datetime > after 的记录
+        """
+        from sqlalchemy import select
+
         try:
+            limit = min(int(request.args.get("limit", 50)), 200)
+        except (ValueError, TypeError):
+            limit = 50
+
+        before_dt = _parse_dt(request.args.get("before"))
+        after_dt = _parse_dt(request.args.get("after"))
+
+        with _db_session() as session:
             q = (
                 select(NewsAnalysisDetail)
                 .order_by(NewsAnalysisDetail.news_datetime.desc())
-                .limit(100)
+                .limit(limit)
             )
+            if before_dt:
+                q = q.where(NewsAnalysisDetail.news_datetime < before_dt)
+            if after_dt:
+                q = q.where(NewsAnalysisDetail.news_datetime > after_dt)
+
             items: List[NewsAnalysisDetail] = [row[0] for row in session.execute(q).all()]
             data: List[Dict[str, Any]] = []
             for n in items:
@@ -46,14 +100,11 @@ def create_app() -> Flask:
                         "conclusion": n.conclusion,
                     }
                 )
-            return jsonify({"items": data})
-        finally:
-            session.close()
+            return jsonify({"items": data, "count": len(data)})
 
     @app.route("/api/news/<int:news_id>")
     def api_news_detail(news_id: int):
-        session = get_db_session()
-        try:
+        with _db_session() as session:
             item = session.get(NewsAnalysisDetail, news_id)
             if not item:
                 return jsonify({"error": "not_found"}), 404
@@ -93,13 +144,12 @@ def create_app() -> Flask:
                 "conclusion": item.conclusion,
             }
             return jsonify(data)
-        finally:
-            session.close()
 
     @app.route("/api/stats")
     def api_stats():
-        session = get_db_session()
-        try:
+        from sqlalchemy import select, func
+
+        with _db_session() as session:
             total_news = session.scalar(select(func.count(NewsAnalysisDetail.id))) or 0
             latest_time = session.scalar(
                 select(func.max(NewsAnalysisDetail.news_datetime))
@@ -112,8 +162,6 @@ def create_app() -> Flask:
                     else None,
                 }
             )
-        finally:
-            session.close()
 
     return app
 

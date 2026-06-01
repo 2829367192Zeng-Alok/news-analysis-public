@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
@@ -11,13 +10,13 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 from doubao_client import chat_with_usage, parse_json_from_text
+from doubao_client import DoubaoRateLimitError, DoubaoUnavailableError
 from models import SelectedNews, NewsAnalysisDetail, get_db_session
 from prompts import ANALYZE_PROMPT_TEMPLATE
 from utils import now_beijing_naive
 
 
 def _norm_list(v: Any) -> List[str] | None:
-    """将 keyword/Reference 转为 list 或 None。"""
     if v is None:
         return None
     if isinstance(v, list):
@@ -47,28 +46,30 @@ def _norm_int(v: Any, default: int = 0) -> int:
 
 
 def call_doubao_analyze_api(
-    title: str, content: str, token_accumulator: Optional[List[Dict[str, int]]] = None
+    title: str,
+    content: str,
+    token_accumulator: Optional[List[Dict[str, int]]] = None,
+    analyze_template: Optional[str] = None,
+    system_prompt: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    调用豆包 Ark API，使用详细分析提示词，返回解析后的 32 字段字典。
-    若传入 token_accumulator，本次调用的 token 用量会 append 到该列表。
+    调用豆包详细分析接口。
+    DoubaoRateLimitError / DoubaoUnavailableError 直接上抛。
     """
     if not settings.doubao.api_key:
         raise RuntimeError("未配置 DOUBAO_API_KEY，请在 config 或环境变量中设置")
 
-    # 详细分析提示长、输出字段多，单次请求可能较慢，超时设为 240 秒
     analyze_timeout = 240
-    user_text = ANALYZE_PROMPT_TEMPLATE.format(
-        title=title,
-        content=(content or "")[:12000],
-    )
-    # 步骤三不重试：超时即抛异常，由上层 continue 下一条
+    tpl = analyze_template if analyze_template is not None else ANALYZE_PROMPT_TEMPLATE
+    user_text = tpl.format(title=title, content=(content or "")[:12000])
     model_analyze = (settings.doubao.model_id_analyze or settings.doubao.model_id or "").strip() or None
+    # max_retries=0：分析阶段不在 client 层重试（耗时长、token 贵），由上层决策
     raw_text, usage = chat_with_usage(
         model=model_analyze,
         user_text=user_text,
         timeout=analyze_timeout,
         max_retries=0,
+        system_text=system_prompt,
     )
     if token_accumulator is not None:
         token_accumulator.append(usage)
@@ -76,11 +77,17 @@ def call_doubao_analyze_api(
 
 
 def analyze_news(
-    limit: int = 20, token_accumulator: Optional[List[Dict[str, int]]] = None
+    limit: int = 20,
+    token_accumulator: Optional[List[Dict[str, int]]] = None,
 ) -> List[NewsAnalysisDetail]:
     """
     对 selected_news 中尚未写入 news_analysis_detail 的新闻进行详细分析。
-    若传入 token_accumulator，每次 API 调用的 token 用量会 append 到该列表。
+
+    v2 改动：
+    - DoubaoUnavailableError（404/403/503）：立即上抛，由流水线记录告警。
+    - DoubaoRateLimitError（429）：立即上抛（analyze 阶段 token 贵，不在此重试）。
+    - 其他异常：仍"连续相同错误 ≥2 次熔断"，并 continue 下一条。
+    - 修复：每条分析成功后单独提交，避免中途异常导致已成功条目全部丢失。
     """
     session = get_db_session()
     try:
@@ -96,21 +103,24 @@ def analyze_news(
             return []
 
         new_details: List[NewsAnalysisDetail] = []
-        last_error: Optional[str] = None
-        same_error_count = 0
+        last_misc_error: Optional[str] = None
+        same_misc_error_count = 0
+
         for item in selected_items:
             try:
                 result = call_doubao_analyze_api(
                     item.title, item.content, token_accumulator=token_accumulator
                 )
+            except (DoubaoUnavailableError, DoubaoRateLimitError):
+                raise
             except Exception as e:
                 err = str(e)
-                same_error_count = same_error_count + 1 if err == last_error else 1
-                last_error = err
+                same_misc_error_count = same_misc_error_count + 1 if err == last_misc_error else 1
+                last_misc_error = err
                 logger.warning("详细分析 API 单条异常: %s", e)
-                if same_error_count >= 2:
+                if same_misc_error_count >= 2:
                     raise RuntimeError(
-                        f"相同报错连续出现 2 次，停止运行以节省 tokens: {last_error}"
+                        f"分析步骤相同报错连续出现 2 次，停止本轮以节省 tokens: {last_misc_error}"
                     )
                 continue
 
@@ -148,10 +158,9 @@ def analyze_news(
                 content_hash=item.content_hash,
             )
             session.add(detail)
-            new_details.append(detail)
-
-        if new_details:
+            # 修复：每条单独提交，中途异常不丢已成功数据
             session.commit()
+            new_details.append(detail)
 
         return new_details
     except Exception as e:

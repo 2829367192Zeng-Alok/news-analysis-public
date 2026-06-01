@@ -13,6 +13,7 @@ from pathlib import Path
 from news_fetcher import fetch_latest_news
 from news_filter import filter_news
 from news_analyzer import analyze_news
+from feishu_webhook import push_analysis_details
 from utils import now_beijing_naive
 
 logging.basicConfig(
@@ -145,6 +146,10 @@ def main() -> None:
         report_lines.append(
             f"  Token 消耗: input={u3['input_tokens']}, output={u3['output_tokens']}, total={u3['total_tokens']}"
         )
+        try:
+            push_analysis_details(new_details)
+        except Exception:
+            logger.exception("飞书 Webhook 推送环节异常（已忽略，不中断流水线）")
     except Exception as e:
         step3_seconds = time.perf_counter() - t0
         report_lines.append("")
