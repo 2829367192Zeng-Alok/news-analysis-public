@@ -13,6 +13,7 @@ from pathlib import Path
 from news_fetcher import fetch_latest_news
 from news_filter import filter_news
 from news_analyzer import analyze_news
+from doubao_client import DoubaoRateLimitError, DoubaoUnavailableError
 from feishu_webhook import push_analysis_details
 from utils import now_beijing_naive
 
@@ -89,16 +90,6 @@ def main() -> None:
         report_path = Path(__file__).resolve().parent / "pipeline_report.txt"
         report_path.write_text("\n".join(report_lines), encoding="utf-8")
         logger.info("报告已写入: %s", report_path)
-        try:
-            import sys
-            if sys.platform == "win32":
-                import os
-                os.startfile(str(report_path))
-            else:
-                import subprocess
-                subprocess.run(["xdg-open", str(report_path)], check=False)
-        except Exception as e:
-            logger.warning("无法自动打开报告文件: %s", e)
         return
 
     logger.info("步骤 2：筛选（仅本批采集）-> selected_news")
@@ -122,6 +113,20 @@ def main() -> None:
         report_lines.append(
             f"  Token 消耗: input={u2['input_tokens']}, output={u2['output_tokens']}, total={u2['total_tokens']}"
         )
+    except DoubaoUnavailableError as e:
+        step2_seconds = time.perf_counter() - t0
+        report_lines.append("")
+        report_lines.append("[步骤 2] 筛选 -> selected_news  失败（接口不可用 404/403）")
+        report_lines.append(f"  耗时: {step2_seconds:.2f} 秒")
+        report_lines.append(f"  错误: {e}")
+        logger.error("步骤 2 接口不可用: %s", e)
+    except DoubaoRateLimitError as e:
+        step2_seconds = time.perf_counter() - t0
+        report_lines.append("")
+        report_lines.append("[步骤 2] 筛选 -> selected_news  失败（429 限流）")
+        report_lines.append(f"  耗时: {step2_seconds:.2f} 秒")
+        report_lines.append(f"  错误: {e}")
+        logger.warning("步骤 2 限流: %s", e)
     except Exception as e:
         step2_seconds = time.perf_counter() - t0
         report_lines.append("")
@@ -150,6 +155,20 @@ def main() -> None:
             push_analysis_details(new_details)
         except Exception:
             logger.exception("飞书 Webhook 推送环节异常（已忽略，不中断流水线）")
+    except DoubaoUnavailableError as e:
+        step3_seconds = time.perf_counter() - t0
+        report_lines.append("")
+        report_lines.append("[步骤 3] 详细分析 -> news_analysis_detail  失败（接口不可用 404/403）")
+        report_lines.append(f"  耗时: {step3_seconds:.2f} 秒")
+        report_lines.append(f"  错误: {e}")
+        logger.error("步骤 3 接口不可用: %s", e)
+    except DoubaoRateLimitError as e:
+        step3_seconds = time.perf_counter() - t0
+        report_lines.append("")
+        report_lines.append("[步骤 3] 详细分析 -> news_analysis_detail  失败（429 限流）")
+        report_lines.append(f"  耗时: {step3_seconds:.2f} 秒")
+        report_lines.append(f"  错误: {e}")
+        logger.warning("步骤 3 限流: %s", e)
     except Exception as e:
         step3_seconds = time.perf_counter() - t0
         report_lines.append("")
@@ -176,17 +195,6 @@ def main() -> None:
     report_path = Path(__file__).resolve().parent / "pipeline_report.txt"
     report_path.write_text("\n".join(report_lines), encoding="utf-8")
     logger.info("报告已写入: %s", report_path)
-
-    try:
-        import sys
-        if sys.platform == "win32":
-            import os
-            os.startfile(str(report_path))
-        else:
-            import subprocess
-            subprocess.run(["xdg-open", str(report_path)], check=False)
-    except Exception as e:
-        logger.warning("无法自动打开报告文件: %s", e)
 
 
 if __name__ == "__main__":

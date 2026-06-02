@@ -21,12 +21,17 @@ import logging
 import os
 from datetime import datetime, timedelta
 from typing import Dict, Optional
+import json
+from pathlib import Path
 
 from config import settings
 from feishu_webhook.webhook_client import send_text_message
 from utils import now_beijing_naive
 
 logger = logging.getLogger(__name__)
+
+# 进程间持久化告警抑制状态的文件路径
+_STATE_FILE = Path(__file__).resolve().parent.parent / ".alert_state.json"
 
 # ---------- 告警阈值（分钟） ----------
 _RAW_STALE_MIN = int(os.getenv("ALERT_RAW_STALE_MINUTES", "30"))
@@ -55,18 +60,16 @@ class PipelineHealthChecker:
     """
 
     def __init__(self) -> None:
-        # last_alert_time[alert_key] = 上次发送告警的时间
         self._last_alert: Dict[str, datetime] = {}
-        # 记录上次已知的"最新 create_time"，用于判断是否有新数据写入
         self._last_known: Dict[str, Optional[datetime]] = {
             "raw": None,
             "analyze": None,
         }
-        # 告警是否正在触发中（用于发送"恢复"通知）
         self._alerting: Dict[str, bool] = {
             "raw": False,
             "analyze": False,
         }
+        self._load_state()
 
     # ------------------------------------------------------------------
     # 公开方法
@@ -122,6 +125,7 @@ class PipelineHealthChecker:
         _send_alert(text)
         self._last_alert[key] = now
         logger.warning("已发送 API 错误告警: step=%s type=%s", step, error_type)
+        self._save_state()
 
     # ------------------------------------------------------------------
     # 内部实现
@@ -155,6 +159,7 @@ class PipelineHealthChecker:
                 self._last_alert[layer_key] = now
                 self._alerting[layer_key] = True
                 logger.warning("已发送告警: %s (latest=%s)", layer_key, latest_time)
+                self._save_state()
         else:
             self._last_known[layer_key] = latest_time
             if self._alerting.get(layer_key):
@@ -167,6 +172,7 @@ class PipelineHealthChecker:
                 self._alerting[layer_key] = False
                 self._last_alert.pop(layer_key, None)
                 logger.info("已发送恢复通知: %s", layer_key)
+                self._save_state()
 
     def _is_suppressed(self, key: str) -> bool:
         """判断该告警 key 是否在抑制窗口内。"""
@@ -240,3 +246,36 @@ class PipelineHealthChecker:
             f"可能原因：豆包 API 限流(429) / 接口变更(404) / API Key 失效\n"
             f"请检查 logs/ 中最新报错，并前往豆包控制台确认账户状态。"
         )
+
+    def _load_state(self) -> None:
+        """从文件加载持久化状态，使告警抑制在进程重启后仍然有效。"""
+        try:
+            if _STATE_FILE.exists():
+                raw = json.loads(_STATE_FILE.read_text(encoding="utf-8"))
+                alerts = raw.get("last_alert", {})
+                self._last_alert = {
+                    k: datetime.fromisoformat(v)
+                    for k, v in alerts.items()
+                }
+                alerting = raw.get("alerting", {})
+                for k in self._alerting:
+                    if k in alerting:
+                        self._alerting[k] = bool(alerting[k])
+        except Exception as e:
+            logger.debug("加载告警状态失败（首次运行属正常）: %s", e)
+
+    def _save_state(self) -> None:
+        """将当前告警时间戳持久化到文件，供下次进程读取。"""
+        try:
+            data = {
+                "last_alert": {
+                    k: v.isoformat() for k, v in self._last_alert.items()
+                },
+                "alerting": dict(self._alerting),
+            }
+            _STATE_FILE.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.debug("保存告警状态失败: %s", e)
