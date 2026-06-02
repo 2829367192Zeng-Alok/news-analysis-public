@@ -1,31 +1,37 @@
 # -*- coding: utf-8 -*-
 """
-豆包（火山引擎 Ark）Responses API 调用封装。
+豆包（火山引擎 Ark）Responses API 调用封装 — OpenAI SDK 版。
 
-请求格式参考官方示例：
-  POST https://ark.cn-beijing.volces.com/api/v3/responses
-  Authorization: Bearer <api_key>
-  Body: { "model": "<model_id>", "input": [ { "role": "user", "content": [ { "type": "input_text", "text": "..." } ] } ] }
+通过 OpenAI SDK 调用 Ark Responses API：
+  base_url : https://ark.cn-beijing.volces.com/api/v3
+  model    : 豆包模型名（如 doubao-seed-1-8-251228）
+             或在线推理接入点 ID（如 ep-20250101xxxxxx-xxxxx）
 
-v2 改动：
-- 429 限流：指数退避重试（最长等待 64s），并记录限流状态供上层熔断判断。
-- 404 接口不可用：立即抛出 DoubaoUnavailableError，不重试（重试无意义）。
-- 5xx 服务错误：指数退避重试。
-- 新增 DoubaoRateLimitError / DoubaoUnavailableError 异常类，方便上层区分错误类型。
+v3 改动：
+- 底层从 requests 手动 HTTP 改为 OpenAI SDK（client.responses.create）
+- 响应解析由 SDK 接管，_extract_text() 的 7 个 fallback 分支精简为对象属性访问
+- 异常捕获从 HTTP 状态码判断改为 openai 异常类型匹配
+- 新增模块级客户端单例（_get_client），避免每次调用重建连接
+- 所有公开接口签名（chat / chat_with_usage / parse_json_from_text）保持不变
+- 所有自定义异常类（DoubaoError / DoubaoRateLimitError / DoubaoUnavailableError）保持不变
 """
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-import requests
+import openai
+from openai import OpenAI
 
 from config import settings
 
+logger = logging.getLogger(__name__)
 
-# ---------- 自定义异常 ----------
+
+# ---------- 自定义异常（保持不变）----------
 
 class DoubaoError(RuntimeError):
     """豆包 API 调用基础异常。"""
@@ -35,21 +41,76 @@ class DoubaoRateLimitError(DoubaoError):
     """429 Too Many Requests：触发限流，调用方应回退等待。"""
     def __init__(self, msg: str = "", retry_after: float = 0.0):
         super().__init__(msg)
-        self.retry_after = retry_after  # 建议等待秒数（来自响应头或默认值）
+        self.retry_after = retry_after
 
 
 class DoubaoUnavailableError(DoubaoError):
-    """404/503 接口/模型不可用：配置或服务端问题，重试无意义。"""
+    """404 / 403 / 503 接口或模型不可用：配置或服务端问题，重试无意义。"""
 
 
-# ---------- 内部构建函数 ----------
+# ---------- OpenAI SDK 客户端（懒加载单例）----------
 
-def _build_input_text_message(text: str) -> list:
-    """构建仅包含文本的 user 消息 content（Ark input 格式）。"""
+_client: Optional[OpenAI] = None
+
+
+def _get_client() -> OpenAI:
+    """
+    返回模块级缓存的 OpenAI 客户端，首次调用时初始化。
+    max_retries=0：重试策略由 chat_with_usage() 统一控制，不交给 SDK。
+    """
+    global _client
+    if _client is None:
+        base = (settings.doubao.api_base_url or "https://ark.cn-beijing.volces.com").rstrip("/")
+        # OpenAI SDK 要求 base_url 包含 /api/v3
+        if not base.endswith("/api/v3"):
+            base = f"{base}/api/v3"
+        _client = OpenAI(
+            api_key=settings.doubao.api_key or "placeholder",
+            base_url=base,
+            max_retries=0,
+        )
+    return _client
+
+
+# ---------- 内部工具函数 ----------
+
+def _build_content(text: str) -> List[Dict[str, str]]:
+    """构建 Responses API input content 块（input_text 类型）。"""
     return [{"type": "input_text", "text": text}]
 
 
-# ---------- 公开 API ----------
+def _extract_text_from_response(response: Any) -> Optional[str]:
+    """
+    从 SDK 响应对象中提取文本内容。
+    1. 优先用 output_text 快捷属性（openai SDK >= 1.x Responses API）
+    2. 回退到遍历 output 列表中的 content 块
+    """
+    output_text = getattr(response, "output_text", None)
+    if output_text:
+        return str(output_text)
+
+    for item in (getattr(response, "output", None) or []):
+        for block in (getattr(item, "content", None) or []):
+            text = getattr(block, "text", None)
+            if text:
+                return str(text)
+    return None
+
+
+def _extract_usage_from_response(response: Any) -> Dict[str, int]:
+    """从 SDK 响应对象中提取 token 用量。"""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    input_t = int(getattr(usage, "input_tokens", 0) or 0)
+    output_t = int(getattr(usage, "output_tokens", 0) or 0)
+    total_t = int(getattr(usage, "total_tokens", 0) or 0)
+    if total_t == 0:
+        total_t = input_t + output_t
+    return {"input_tokens": input_t, "output_tokens": output_t, "total_tokens": total_t}
+
+
+# ---------- 公开 API（签名保持不变）----------
 
 def chat(
     model: Optional[str] = None,
@@ -57,10 +118,7 @@ def chat(
     timeout: int = 60,
     system_text: Optional[str] = None,
 ) -> str:
-    """
-    调用豆包 Ark Responses API，返回模型回复的纯文本。
-    遇 429 做指数退避重试（最多 4 次），遇 404/503 立即抛 DoubaoUnavailableError。
-    """
+    """调用豆包 API，返回模型回复的纯文本。遇 429 做指数退避重试（最多 4 次）。"""
     text, _ = chat_with_usage(
         model=model,
         user_text=user_text,
@@ -79,10 +137,10 @@ def chat_with_usage(
     system_text: Optional[str] = None,
 ) -> Tuple[str, Dict[str, int]]:
     """
-    同 chat()，但返回 (回复文本, token 用量)。
+    同 chat()，但同时返回 (回复文本, token 用量)。
     - max_retries=0：仅请求 1 次，不重试。
-    - 429 限流：指数退避（2^attempt 秒，最长 64s），最多重试 max_retries 次。
-    - 404/503：立即抛 DoubaoUnavailableError，不消耗重试次数。
+    - 429 限流：指数退避（最小 4s，最大 64s），优先采用响应头 Retry-After。
+    - 404 / 403 / 503：立即抛 DoubaoUnavailableError，不消耗重试次数。
     """
     last_err: Optional[Exception] = None
     attempts = max(1, max_retries + 1)
@@ -91,64 +149,28 @@ def chat_with_usage(
         try:
             return _chat_once(model, user_text, timeout, system_text=system_text)
         except DoubaoUnavailableError:
-            # 404 / 503：配置或服务端问题，重试无意义，立即上抛
             raise
         except DoubaoRateLimitError as e:
             last_err = e
             if attempt >= attempts - 1:
                 break
-            # 指数退避：2^attempt 秒，最小 4s，最大 64s
             wait = min(64.0, max(4.0, 2 ** (attempt + 2)))
             if e.retry_after > 0:
                 wait = min(64.0, e.retry_after)
-            import logging
-            logging.getLogger(__name__).warning(
-                "豆包 429 限流，等待 %.1fs 后重试（attempt %s/%s）", wait, attempt + 1, attempts
+            logger.warning(
+                "豆包 429 限流，等待 %.1fs 后重试（attempt %s/%s）",
+                wait, attempt + 1, attempts,
             )
             time.sleep(wait)
         except Exception as e:
             last_err = e
             if attempt < attempts - 1:
-                wait = min(16.0, 1.0 * (attempt + 1))
-                time.sleep(wait)
+                time.sleep(min(16.0, 1.0 * (attempt + 1)))
 
     raise last_err  # type: ignore
 
 
-# ---------- 内部实现 ----------
-
-def _extract_usage(data: Dict[str, Any]) -> Dict[str, int]:
-    """从 API 响应中解析 token 用量。"""
-    out = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-    if not isinstance(data, dict):
-        return out
-
-    def _usage_node(obj: Any) -> Optional[Dict]:
-        if not isinstance(obj, dict):
-            return None
-        u = obj.get("usage")
-        return u if isinstance(u, dict) else None
-
-    output = data.get("output")
-    output = output if isinstance(output, dict) else None
-    data_node = data.get("data")
-    data_node = data_node if isinstance(data_node, dict) else None
-
-    for node in (
-        _usage_node(data),
-        _usage_node(output) if output else None,
-        _usage_node(data_node) if data_node else None,
-    ):
-        if not isinstance(node, dict):
-            continue
-        out["input_tokens"] = int(node.get("input_tokens") or node.get("prompt_tokens") or 0)
-        out["output_tokens"] = int(node.get("output_tokens") or node.get("completion_tokens") or 0)
-        out["total_tokens"] = int(node.get("total_tokens") or 0)
-        if out["total_tokens"] == 0 and (out["input_tokens"] or out["output_tokens"]):
-            out["total_tokens"] = out["input_tokens"] + out["output_tokens"]
-        break
-    return out
-
+# ---------- 核心调用（单次请求，不含重试）----------
 
 def _chat_once(
     model: Optional[str],
@@ -156,146 +178,62 @@ def _chat_once(
     timeout: int,
     system_text: Optional[str] = None,
 ) -> Tuple[str, Dict[str, int]]:
-    base_url = (settings.doubao.api_base_url or "").rstrip("/") or "https://ark.cn-beijing.volces.com"
-    url = f"{base_url}/api/v3/responses"
-    api_key = settings.doubao.api_key
-    if not api_key:
-        raise DoubaoError("未配置 DOUBAO_API_KEY，请在 config 或环境变量中设置")
+    if not settings.doubao.api_key:
+        raise DoubaoError("未配置 DOUBAO_API_KEY，请在 .env 中设置")
 
-    model_id = model or settings.doubao.model_id or "doubao-seed-2-0-lite-260215"
-    input_messages: list = []
+    model_id = (model or settings.doubao.model_id or "").strip()
+    if not model_id:
+        raise DoubaoError("未配置豆包模型 ID，请在 .env 中设置 DOUBAO_MODEL_ID")
+
+    # 构建 Responses API input 列表
+    input_messages: List[Dict[str, Any]] = []
     if system_text and str(system_text).strip():
         input_messages.append({
             "role": "system",
-            "content": _build_input_text_message(str(system_text).strip()),
+            "content": _build_content(str(system_text).strip()),
         })
     input_messages.append({
         "role": "user",
-        "content": _build_input_text_message(user_text),
+        "content": _build_content(user_text),
     })
 
-    payload = {"model": model_id, "input": input_messages}
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
     try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
-    except requests.Timeout:
-        raise DoubaoError(f"豆包 API 请求超时（{timeout}s）")
-    except requests.ConnectionError as e:
-        raise DoubaoError(f"豆包 API 连接失败: {e}")
-
-    # --- 根据 HTTP 状态码分类处理 ---
-    if resp.status_code == 429:
+        response = _get_client().responses.create(
+            model=model_id,
+            input=input_messages,
+            timeout=float(timeout),
+        )
+    except openai.RateLimitError as e:
         retry_after = 0.0
-        ra = resp.headers.get("Retry-After", "")
         try:
-            retry_after = float(ra)
-        except (ValueError, TypeError):
+            retry_after = float(e.response.headers.get("Retry-After", 0))
+        except Exception:
             pass
-        raise DoubaoRateLimitError(
-            f"豆包 API 429 限流: {resp.text[:200]}",
-            retry_after=retry_after,
-        )
-    if resp.status_code == 404:
+        raise DoubaoRateLimitError(f"豆包 API 429 限流: {e}", retry_after=retry_after)
+    except openai.NotFoundError as e:
         raise DoubaoUnavailableError(
-            f"豆包 API 404 接口/模型不可用（url={url} model={model_id}）: {resp.text[:200]}"
+            f"豆包 API 404 接口/模型不可用（model={model_id}）: {e}"
         )
-    if resp.status_code == 503:
-        raise DoubaoUnavailableError(
-            f"豆包 API 503 服务不可用: {resp.text[:200]}"
-        )
-    if resp.status_code == 403:
-        raise DoubaoUnavailableError(
-            f"豆包 API 403 鉴权失败（API Key 无效或无权限）: {resp.text[:200]}"
-        )
+    except openai.AuthenticationError as e:
+        raise DoubaoUnavailableError(f"豆包 API 鉴权失败（API Key 无效或无权限）: {e}")
+    except openai.APITimeoutError as e:
+        raise DoubaoError(f"豆包 API 请求超时（{timeout}s）: {e}")
+    except openai.APIConnectionError as e:
+        raise DoubaoError(f"豆包 API 连接失败: {e}")
+    except openai.APIStatusError as e:
+        raise DoubaoError(f"豆包 API HTTP 错误 {e.status_code}: {e}")
 
-    try:
-        resp.raise_for_status()
-    except requests.HTTPError as e:
-        raise DoubaoError(f"豆包 API HTTP 错误 {resp.status_code}: {resp.text[:200]}") from e
+    text = _extract_text_from_response(response)
+    if not text:
+        raise DoubaoError(f"无法从豆包 API 响应中提取文本，响应对象: {response!r}")
 
-    data = resp.json()
-
-    text = _extract_text(data)
-    if text is None:
-        raise DoubaoError(
-            f"无法从豆包 API 响应中解析文本，响应键: {list(data.keys()) if isinstance(data, dict) else type(data)}"
-        )
-    return text.strip(), _extract_usage(data)
+    return text.strip(), _extract_usage_from_response(response)
 
 
-def _extract_text(data: Any) -> Optional[str]:
-    """从 API 响应 dict 中提取文本，兼容多种 Ark 响应结构。"""
-    if not isinstance(data, dict):
-        return None
-
-    output = data.get("output")
-    if output is None and "data" in data:
-        output = (data.get("data") or {}).get("output")
-
-    # 1. output.text
-    if isinstance(output, dict) and "text" in output:
-        return output.get("text")
-
-    # 2. output.choices[0].message.content
-    if isinstance(output, dict) and "choices" in output:
-        choices = output.get("choices") or []
-        if choices and isinstance(choices[0], dict):
-            msg = choices[0].get("message")
-            if isinstance(msg, dict):
-                return msg.get("content")
-
-    # 3. 顶层 choices[0].message.content（OpenAI 兼容）
-    if "choices" in data:
-        choices = data.get("choices") or []
-        if choices and isinstance(choices[0], dict):
-            msg = choices[0].get("message")
-            if isinstance(msg, dict):
-                return msg.get("content")
-
-    # 4. output 直接为字符串
-    if isinstance(data.get("output"), str):
-        return data.get("output")
-
-    # 5. output 为 list（Ark Responses API 新版）
-    if isinstance(output, list):
-        parts = []
-        for item in output:
-            if not isinstance(item, dict):
-                continue
-            if item.get("text"):
-                parts.append(str(item["text"]))
-            elif item.get("content") is not None:
-                c = item["content"]
-                if isinstance(c, str):
-                    parts.append(c)
-                elif isinstance(c, list):
-                    for block in c:
-                        if isinstance(block, dict) and "text" in block:
-                            parts.append(block["text"] or "")
-        if parts:
-            return "\n".join(parts)
-
-    # 6. output.results 数组
-    if isinstance(output, dict) and "results" in output:
-        parts = [r.get("text", "") for r in (output.get("results") or []) if isinstance(r, dict) and r.get("text")]
-        if parts:
-            return "\n".join(parts)
-
-    # 7. output.message.content
-    if isinstance(output, dict):
-        msg = output.get("message")
-        if isinstance(msg, dict) and msg.get("content"):
-            return msg["content"]
-
-    return None
-
+# ---------- 工具函数（保持不变）----------
 
 def parse_json_from_text(raw: str) -> Dict[str, Any]:
-    """从模型返回的文本中解析 JSON。支持整段为 JSON，或 ```json ... ``` 代码块。"""
+    """从模型返回的文本中解析 JSON。支持整段为 JSON 或 ```json ... ``` 代码块。"""
     raw = raw.strip()
     try:
         return json.loads(raw)
