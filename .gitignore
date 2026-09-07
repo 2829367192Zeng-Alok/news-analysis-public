@@ -21,6 +21,9 @@ news/*.csv
 analysis_report.txt
 pipeline_report.txt
 
+# Alert suppression state (runtime, regenerated)
+.alert_state.json
+
 # Web display runtime output (synced from DB)
 web_display/data/*.json
 web_display/.sync_state.json

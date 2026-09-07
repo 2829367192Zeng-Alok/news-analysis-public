@@ -15,7 +15,7 @@ from news_filter import filter_news
 from news_analyzer import analyze_news
 from doubao_client import DoubaoRateLimitError, DoubaoUnavailableError
 from feishu_webhook import push_analysis_details
-from utils import now_beijing_naive
+from utils import now_beijing_naive, sum_token_usage
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,19 +30,6 @@ logger = logging.getLogger(__name__)
 # 示例：1=1分钟, 10=10分钟, 60=1小时, 600=10小时
 FETCH_WINDOW_MINUTES = float(os.environ.get("FETCH_WINDOW_MINUTES", "60"))
 # ========================================
-
-
-def _sum_usage(usages: list) -> dict:
-    """汇总多轮调用的 token 用量。"""
-    total = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-    for u in usages:
-        if isinstance(u, dict):
-            total["input_tokens"] += int(u.get("input_tokens") or 0)
-            total["output_tokens"] += int(u.get("output_tokens") or 0)
-            total["total_tokens"] += int(u.get("total_tokens") or 0)
-    if total["total_tokens"] == 0 and (total["input_tokens"] or total["output_tokens"]):
-        total["total_tokens"] = total["input_tokens"] + total["output_tokens"]
-    return total
 
 
 def main() -> None:
@@ -105,7 +92,7 @@ def main() -> None:
         new_selected_count = len(new_selected)
         step2_seconds = time.perf_counter() - t0
         step2_tokens = filter_token_list
-        u2 = _sum_usage(step2_tokens)
+        u2 = sum_token_usage(step2_tokens)
         report_lines.append("")
         report_lines.append("[步骤 2] 筛选 -> selected_news")
         report_lines.append(f"  耗时: {step2_seconds:.2f} 秒")
@@ -143,7 +130,7 @@ def main() -> None:
         new_detail_count = len(new_details)
         step3_seconds = time.perf_counter() - t0
         step3_tokens = analyze_token_list
-        u3 = _sum_usage(step3_tokens)
+        u3 = sum_token_usage(step3_tokens)
         report_lines.append("")
         report_lines.append("[步骤 3] 详细分析 -> news_analysis_detail")
         report_lines.append(f"  耗时: {step3_seconds:.2f} 秒")
@@ -178,8 +165,8 @@ def main() -> None:
         logger.exception("步骤 3 失败")
 
     total_seconds = step1_seconds + step2_seconds + step3_seconds
-    u2 = _sum_usage(step2_tokens)
-    u3 = _sum_usage(step3_tokens)
+    u2 = sum_token_usage(step2_tokens)
+    u3 = sum_token_usage(step3_tokens)
     report_lines.append("")
     report_lines.append("-" * 60)
     report_lines.append("汇总")

@@ -12,7 +12,9 @@ FILTER_PROMPT_TEMPLATE = """你是一个金融新闻筛选助手。请考虑美�
 {content}
 """
 
-# 详细分析阶段：要求模型输出包含 32 个字段的 JSON（与 news_analysis_detail 表一致）
+# 详细分析阶段：要求模型输出包含 25 个字段的 JSON（与 news_analysis_detail 表一致：
+# relevance/direction/impact + 5 组 direction/impact + keyword/Reference +
+# interest/dollar/warrisk/liquidity/emotion + shorttime/midtime/longtime + insight/conclusion）
 ANALYZE_PROMPT_TEMPLATE = """你是一个资深黄金宏观分析师。
 
 

@@ -255,3 +255,41 @@ c = sum(int(u.get("completion_tokens", 0)) for u in usages)
 2. 更新 `docs/project_database_schema_reference.md`（若动索引/约束）；
 3. 更新 `docs/deployment_reference.md`（若 check_db/依赖变化）；
 4. 更新 `docs/project_script_architecture.md`（若删除脚本）。
+
+---
+
+## 8. 修复记录（2026-09-07，W1–W3）
+
+按 `docs/fix_plan_2026-09-07.md` 完成 W1–W3，验证：`pytest` 13 passed、47 个 `.py` 全量 `py_compile` 通过。
+
+| 问题 | 修复 |
+|---|---|
+| S1 | `run_pipeline_once.py` 删除 |
+| S2 | content_hash 统一 blake2b（utils 唯一实现；news_fetcher 改导入）；`scripts/normalize_content_hash.py` 数据归一（dry-run/update/dedupe），**生产库尚未执行** |
+| S3 | `check_db.py` 重写为方言无关 `SELECT 1` |
+| S4 | 测试断言修正 + 新增 `tests/test_units.py`（13 用例全绿） |
+| S5 | `main.js` 加 `escapeHtml`，模型输出字段转义 |
+| S6 | `analyze_news` 加 `only_content_hashes`；90s 流水线按批分析；loop.sh `TIMEOUT_SEC` 85→240 |
+| S7 | `app.py` debug 由 `FLASK_DEBUG` 控制（默认关） |
+| L1 | `run_analysis_latest_20.py` 时间统一北京时间 |
+| L2 | 90s 流水线新增滞留补偿筛选（`CATCHUP_STALE_MINUTES=30`/`CATCHUP_FILTER_LIMIT=15`） |
+| L3 | 三表移除列级 `index=True`；`init_db.py` 幂等清理遗留 `ix_*` |
+| L4 | **未实施**（唯一约束属破坏性变更，待批准；并发侧 flock 已补） |
+| L5 | 两个评估脚本 token 键名改 `input_tokens/output_tokens` |
+| L7 | prompts 注释字段数更正为 25 |
+| L8 | `news_filter.py` 达 limit 时告警 |
+| O2 | `run_task.py` 加单实例锁（`utils.acquire_single_instance_lock`） |
+| O3/O4 | sync/setup 脚本去硬编码解释器；Nginx 模板不再占用 default_server |
+| O5 | `FETCH_WINDOW_MINUTES` 由 python 读 env（loop.sh 默认导出 1.5） |
+| Q3 | `web_display/credit.zip` 删除（无引用） |
+| Q7 | `app.py` `_parse_dt` 支持带 `Z`/毫秒 ISO |
+| R1 | `_sum_usage` 收敛为 `utils.sum_token_usage`（4 处调用方替换） |
+| R2 | 根目录重复脚本删除（仅留 `scripts/`） |
+| R3 | `sync_news_to_display.py` 原子写（tmp + `os.replace`） |
+| R4 | `.gitignore` 补 `.alert_state.json` |
+| R5 | `requirements.txt` 加 gunicorn；新增 `requirements-dev.txt` |
+| R6 | `debug_doubao.py` 改用 `doubao_client` 统一入口 |
+| R10 | 建立 `db_migrations/` 目录规范 |
+| R11 | 迁移脚本连接串脱敏打印 |
+| R12 | `main.js` 刷新失败指数退避（15s→120s） |
+| Q2/Q5/R7/L10/L6 | Q5 补单测（`tests/test_units.py`）；L6 导出文件名含分钟数；Q2（v2 prompts）、R7（CDN 本地化）、L10（文案统一）未实施（可选/需决策） |

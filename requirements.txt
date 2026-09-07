@@ -8,4 +8,4 @@ openai>=1.0.0
 tushare>=1.2.89
 python-dotenv>=1.0.0
 PyYAML>=6.0.0
-
+gunicorn>=21.2.0

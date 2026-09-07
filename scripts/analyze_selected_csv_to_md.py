@@ -127,8 +127,9 @@ def main() -> None:
             lines.append("")
 
     if token_usage:
-        prompt_tokens = sum(int(u.get("prompt_tokens", 0)) for u in token_usage)
-        completion_tokens = sum(int(u.get("completion_tokens", 0)) for u in token_usage)
+        # doubao_client 返回的用量键为 input_tokens / output_tokens / total_tokens
+        prompt_tokens = sum(int(u.get("input_tokens", 0)) for u in token_usage)
+        completion_tokens = sum(int(u.get("output_tokens", 0)) for u in token_usage)
         total_tokens = sum(int(u.get("total_tokens", 0)) for u in token_usage)
         lines.extend(
             [

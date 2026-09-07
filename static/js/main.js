@@ -178,13 +178,33 @@ async function loadDetail(id) {
   }
 }
 
+// 自动刷新：失败时指数退避（15s → 最大 120s），成功后复位
+let refreshFailures = 0;
+const BASE_REFRESH_MS = 15000;
+const MAX_REFRESH_MS = 120000;
+
+function nextRefreshDelay() {
+  const delay = Math.min(BASE_REFRESH_MS * Math.pow(2, refreshFailures), MAX_REFRESH_MS);
+  return delay;
+}
+
+async function refreshTick() {
+  try {
+    await Promise.all([loadStats(), loadNewsList()]);
+    refreshFailures = 0;
+  } catch (e) {
+    refreshFailures = Math.min(refreshFailures + 1, 5);
+  }
+}
+
 function setupAutoRefresh() {
   loadStats();
   loadNewsList();
-  setInterval(() => {
-    loadStats();
-    loadNewsList();
-  }, 15000);
+  // 首次立即执行，之后按退避策略轮询
+  setTimeout(async function tick() {
+    await refreshTick();
+    setTimeout(tick, nextRefreshDelay());
+  }, nextRefreshDelay());
 }
 
 window.addEventListener("DOMContentLoaded", setupAutoRefresh);

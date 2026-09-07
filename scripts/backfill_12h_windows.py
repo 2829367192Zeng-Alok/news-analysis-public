@@ -27,25 +27,13 @@ from news_fetcher import (
 )
 from news_filter import filter_news
 from news_sources import get_sources_by_ids
-from utils import compute_content_hash, now_beijing_naive
+from utils import compute_content_hash, now_beijing_naive, sum_token_usage
 
 logger = logging.getLogger(__name__)
 
 
 def _parse_bj_naive(s: str) -> datetime:
     return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
-
-
-def _sum_usage(usages: list) -> dict:
-    total = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-    for u in usages:
-        if isinstance(u, dict):
-            total["input_tokens"] += int(u.get("input_tokens") or 0)
-            total["output_tokens"] += int(u.get("output_tokens") or 0)
-            total["total_tokens"] += int(u.get("total_tokens") or 0)
-    if total["total_tokens"] == 0 and (total["input_tokens"] or total["output_tokens"]):
-        total["total_tokens"] = total["input_tokens"] + total["output_tokens"]
-    return total
 
 
 def _fetch_window_raw(
@@ -151,7 +139,7 @@ def run_backfill(start_dt: datetime, end_dt: datetime, window_hours: int) -> Non
                 token_accumulator=filter_tokens,
                 only_content_hashes=set(new_raw_hashes),
             )
-            u2 = _sum_usage(filter_tokens)
+            u2 = sum_token_usage(filter_tokens)
             logger.info(
                 "窗口#%s 筛选新增 selected_news=%s, tokens=%s",
                 idx, len(selected), u2["total_tokens"],
@@ -167,7 +155,7 @@ def run_backfill(start_dt: datetime, end_dt: datetime, window_hours: int) -> Non
                 limit=max(50, len(selected) + 10),
                 token_accumulator=analyze_tokens,
             )
-            u3 = _sum_usage(analyze_tokens)
+            u3 = sum_token_usage(analyze_tokens)
             logger.info(
                 "窗口#%s 分析新增 detail=%s, tokens=%s",
                 idx, len(details), u3["total_tokens"],

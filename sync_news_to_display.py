@@ -129,10 +129,22 @@ def get_last_state():
         return None
 
 
+def _atomic_write_json(path: Path, obj) -> None:
+    """先写临时文件再 os.replace，避免并发读取方读到半截 JSON。"""
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(
+        json.dumps(obj, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    tmp_path.replace(path)
+
+
 def save_state(total_news: int, max_id: int):
     WEB_DISPLAY_DATA.mkdir(parents=True, exist_ok=True)
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump({"total_news": total_news, "max_id": max_id}, f, ensure_ascii=False)
+    _atomic_write_json(
+        STATE_FILE,
+        {"total_news": total_news, "max_id": max_id},
+    )
 
 
 def main():
@@ -177,8 +189,7 @@ def main():
 
     WEB_DISPLAY_DATA.mkdir(parents=True, exist_ok=True)
     feed_path = WEB_DISPLAY_DATA / "feed.json"
-    with open(feed_path, "w", encoding="utf-8") as f:
-        json.dump(feed, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(feed_path, feed)
     save_state(total_news, max_id)
     logger.info("已写入 %s", feed_path)
     return 0

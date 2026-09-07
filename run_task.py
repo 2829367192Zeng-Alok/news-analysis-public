@@ -9,6 +9,7 @@ from news_filter import filter_news
 from news_analyzer import analyze_news
 from doubao_client import DoubaoRateLimitError, DoubaoUnavailableError
 from feishu_webhook import push_analysis_details, PipelineHealthChecker
+from utils import acquire_single_instance_lock, sum_token_usage
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,19 +22,18 @@ logger = logging.getLogger("run_task")
 _health_checker = PipelineHealthChecker()
 
 
-def _sum_usage(usages: list) -> dict:
-    total = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-    for u in usages:
-        if isinstance(u, dict):
-            total["input_tokens"] += int(u.get("input_tokens") or 0)
-            total["output_tokens"] += int(u.get("output_tokens") or 0)
-            total["total_tokens"] += int(u.get("total_tokens") or 0)
-    if total["total_tokens"] == 0 and (total["input_tokens"] or total["output_tokens"]):
-        total["total_tokens"] = total["input_tokens"] + total["output_tokens"]
-    return total
-
-
 def main() -> None:
+    # 并发保护：上一轮未结束时直接退出，避免与 90s 流水线/其他入口重复处理
+    _lock = acquire_single_instance_lock("financial_news_run_task")
+    if _lock is None:
+        import os
+
+        if os.name == "nt":
+            logger.warning("当前平台（Windows）不支持 flock 单实例锁，继续执行；请勿并行运行多个实例")
+        else:
+            logger.warning("已有实例在运行（run_task），本次直接退出")
+            return
+
     logger.info("=== 开始执行定时任务 ===")
 
     # 步骤 1：采集
@@ -49,7 +49,7 @@ def main() -> None:
     try:
         filter_tokens: list = []
         selected = filter_news(token_accumulator=filter_tokens)
-        u2 = _sum_usage(filter_tokens)
+        u2 = sum_token_usage(filter_tokens)
         logger.info("新增 selected_news: %s 条, tokens=%s", len(selected), u2["total_tokens"])
     except DoubaoUnavailableError as e:
         logger.error("筛选步骤遇到接口不可用错误（404/403）: %s", e)
@@ -70,7 +70,7 @@ def main() -> None:
     try:
         analyze_tokens: list = []
         analyzed = analyze_news(token_accumulator=analyze_tokens)
-        u3 = _sum_usage(analyze_tokens)
+        u3 = sum_token_usage(analyze_tokens)
         logger.info("新增 news_analysis_detail: %s 条, tokens=%s", len(analyzed), u3["total_tokens"])
         try:
             push_analysis_details(analyzed)
@@ -91,4 +91,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

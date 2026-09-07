@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from sqlalchemy import select
 
@@ -79,11 +79,14 @@ def call_doubao_analyze_api(
 def analyze_news(
     limit: int = 20,
     token_accumulator: Optional[List[Dict[str, int]]] = None,
+    only_content_hashes: Optional[Set[str]] = None,
 ) -> List[NewsAnalysisDetail]:
     """
     对 selected_news 中尚未写入 news_analysis_detail 的新闻进行详细分析。
 
-    v2 改动：
+    v3 改动：
+    - 新增 only_content_hashes：仅分析指定 content_hash 集合内的条目（与 filter_news 对齐）。
+      传 None 表示分析所有待处理条目（默认，用于补跑/回补场景）。
     - DoubaoUnavailableError（404/403/503）：立即上抛，由流水线记录告警。
     - DoubaoRateLimitError（429）：立即上抛（analyze 阶段 token 贵，不在此重试）。
     - 其他异常：仍"连续相同错误 ≥2 次熔断"，并 continue 下一条。
@@ -98,6 +101,8 @@ def analyze_news(
             .order_by(SelectedNews.news_datetime.desc())
             .limit(limit)
         )
+        if only_content_hashes is not None:
+            q = q.where(SelectedNews.content_hash.in_(only_content_hashes))
         selected_items: List[SelectedNews] = [row[0] for row in session.execute(q).all()]
         if not selected_items:
             return []

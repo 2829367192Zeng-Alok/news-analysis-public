@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 # 项目根
@@ -19,6 +19,7 @@ from sqlalchemy import select
 from models import RawNews, SelectedNews, NewsAnalysisDetail, get_db_session
 from news_filter import call_doubao_filter_api
 from news_analyzer import call_doubao_analyze_api, _norm_int, _norm_list, _norm_str
+from utils import now_beijing_naive
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,7 +35,7 @@ def _build_detail_from_result(item, result):
         content=item.content,
         news_datetime=item.news_datetime,
         source=item.source,
-        create_time=datetime.now(timezone.utc).replace(tzinfo=None),
+        create_time=now_beijing_naive(),
         relevance=bool(result.get("relevance", getattr(item, "relevance", False))),
         direction=_norm_int(result.get("direction"), getattr(item, "direction", 0) or 0),
         impact=_norm_int(result.get("impact"), getattr(item, "impact", 0) or 0),
@@ -112,7 +113,7 @@ def main():
                     content=raw.content,
                     news_datetime=raw.news_datetime,
                     source=raw.source,
-                    create_time=datetime.now(timezone.utc).replace(tzinfo=None),
+                    create_time=now_beijing_naive(),
                     relevance=True,
                     direction=res.get("direction"),
                     impact=res.get("impact"),

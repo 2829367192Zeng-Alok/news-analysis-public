@@ -55,3 +55,41 @@ def parse_news_datetime(dt_str: str) -> Optional[datetime]:
             continue
     return None
 
+
+def sum_token_usage(usages: list) -> dict:
+    """汇总多轮豆包调用的 token 用量（键为 input_tokens / output_tokens / total_tokens）。"""
+    total = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    for u in usages:
+        if isinstance(u, dict):
+            total["input_tokens"] += int(u.get("input_tokens") or 0)
+            total["output_tokens"] += int(u.get("output_tokens") or 0)
+            total["total_tokens"] += int(u.get("total_tokens") or 0)
+    if total["total_tokens"] == 0 and (total["input_tokens"] or total["output_tokens"]):
+        total["total_tokens"] = total["input_tokens"] + total["output_tokens"]
+    return total
+
+
+def acquire_single_instance_lock(name: str):
+    """
+    进程级单实例锁（POSIX flock）。成功返回文件句柄（需保持引用直到进程结束），
+    已有实例持锁时返回 None。Windows 上无 fcntl，返回 None 并由调用方决定是否继续。
+    """
+    import os
+
+    try:
+        import fcntl
+    except ImportError:
+        return None  # Windows：无 flock，交由调用方自行处理
+
+    lock_path = os.path.join("/tmp" if os.name != "nt" else os.environ.get("TEMP", "/tmp"),
+                             f"{name}.lock")
+    handle = open(lock_path, "w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    handle.write(str(os.getpid()))
+    handle.flush()
+    return handle
+

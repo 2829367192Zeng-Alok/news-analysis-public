@@ -121,6 +121,9 @@ def filter_news(
         raw_items: List[RawNews] = [row[0] for row in session.execute(q).all()]
         if not raw_items:
             return []
+        if len(raw_items) >= limit:
+            # 达到 limit 可能仍有更多待处理条目；本轮截断由调度器下一轮或补偿机制接续
+            logger.warning("筛选待处理条目达到 limit=%s，可能有存量被截断，等待下轮/补偿继续", limit)
 
         new_selected: List[SelectedNews] = []
         last_misc_error: Optional[str] = None

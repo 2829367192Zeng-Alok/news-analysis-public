@@ -7,10 +7,19 @@ import argparse
 from typing import Iterable
 
 from sqlalchemy import MetaData, Table, create_engine, inspect, select, text
+from sqlalchemy.engine import make_url
 
 from config import settings
 
 TABLES = ["raw_news", "selected_news", "news_analysis_detail"]
+
+
+def _masked_url(url: str) -> str:
+    """打印用：隐藏连接串中的密码，避免凭据落日志。"""
+    try:
+        return make_url(url).set(password="***").render_as_string(hide_password=True)
+    except Exception:
+        return "<unparseable-url>"
 
 
 def _build_source_url() -> str:
@@ -47,8 +56,8 @@ def _chunked_rows(result, size: int) -> Iterable[list[dict]]:
 def migrate(chunk_size: int = 1000, truncate_target: bool = True) -> None:
     source_url = _build_source_url()
     target_url = _build_target_url()
-    print(f"源库: {source_url}")
-    print(f"目标库: {target_url}")
+    print(f"源库: {_masked_url(source_url)}")
+    print(f"目标库: {_masked_url(target_url)}")
 
     source_engine = create_engine(source_url, pool_pre_ping=True)
     target_engine = create_engine(target_url, pool_pre_ping=True)

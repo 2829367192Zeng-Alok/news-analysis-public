@@ -63,12 +63,12 @@ def main() -> None:
         ]
 
         _write_csv(
-            out_dir / "raw_news_recent_30m.csv",
+            out_dir / f"raw_news_recent_{args.minutes}m.csv",
             ["id", "title", "content", "news_datetime", "source", "create_time", "content_hash", "relevance"],
             raw_rows,
         )
         _write_csv(
-            out_dir / "selected_news_recent_30m.csv",
+            out_dir / f"selected_news_recent_{args.minutes}m.csv",
             ["id", "title", "content", "news_datetime", "source", "create_time", "relevance", "direction", "impact", "content_hash"],
             selected_rows,
         )

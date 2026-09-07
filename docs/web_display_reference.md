@@ -100,7 +100,7 @@ python sync_news_to_display.py --limit 100  # 导出条数（默认 100）
 
 ### 2.5 附加文件
 
-- `web_display/credit.zip`：页面版权/署名相关资源（历史遗留，勿误删）。
+- `web_display/credit.zip`：早期遗留的版权/署名资源包，代码与页面均无引用，已于 2026-09-07 清理删除（如需恢复可从历史提交取回）。
 
 ---
 

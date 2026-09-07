@@ -13,8 +13,8 @@
    │  触发
    ▼
 ECS（/root/workspace/project/financial-news-analysis）
-   ├── run_pipeline_90s_loop.sh（flock 防并发 + timeout 85s）
-   │      └── run_pipeline_90s.py（采集→筛选→分析→推送→健康检查）
+   ├── run_pipeline_90s_loop.sh（flock 防并发 + timeout 240s）
+   │      └── run_pipeline_90s.py（采集→补偿筛选→本批筛选→按批分析→推送→健康检查）
    ├── gunicorn app:app（Flask 动态站 :8000）
    └── sync_loop.sh ──> sync_news_to_display.py ──> Nginx 静态展示站
    │
@@ -65,11 +65,13 @@ RDS（MySQL 或 PostgreSQL，库名 news_analysis）
 | `ALERT_ANALYZE_STALE_MINUTES` | 分析层停滞告警阈值 | 60 |
 | `ALERT_SUPPRESS_MINUTES` | 同类告警抑制窗口 | 60 |
 
-### 2.4 其他
+### 2.3 其他
 
 | 变量 | 说明 |
 |---|---|
-| `FETCH_WINDOW_MINUTES` | manual/90s 流水线采集窗口（90s 版 shell 中固定导出 1.5） |
+| `FETCH_WINDOW_MINUTES` | manual/90s 流水线采集窗口（90s 版 python 直接读取，默认 1.5；loop.sh 默认导出 1.5） |
+| `CATCHUP_STALE_MINUTES` | 90s 流水线补偿筛选阈值（raw_news 超过该分钟仍未筛） | 30 |
+| `CATCHUP_FILTER_LIMIT` | 补偿筛选单轮上限 | 15 |
 | `MACRO_BASELINE_PATH` | 宏观基线文件显式路径（不设走默认查找） |
 
 > `.env` 与 `~/.financial_news_analysis.env` 含密钥，禁止提交版本库、禁止写入文档。
@@ -140,7 +142,8 @@ pytest tests/ -q                       # 单元测试
 
 ### 5.4 并发保护
 
-`run_pipeline_90s_loop.sh` 使用 `flock -n /tmp/pipeline_financial_news.lock`：上一轮未结束时本轮直接跳过，不排队。
+- `run_pipeline_90s_loop.sh` 使用 `flock -n /tmp/pipeline_financial_news.lock`：上一轮未结束时本轮直接跳过，不排队。
+- `run_task.py` 同样使用单实例锁（`utils.acquire_single_instance_lock`，锁文件 `/tmp/financial_news_run_task.lock`）；Windows 上无 flock 时仅告警并继续。
 
 ---
 

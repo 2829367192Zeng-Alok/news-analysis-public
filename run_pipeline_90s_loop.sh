@@ -18,10 +18,12 @@ LOG_DIR="${SCRIPT_DIR}/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/pipeline_1min.log"
 REPORT_FILE="${SCRIPT_DIR}/pipeline_report.txt"
-TIMEOUT_SEC=85
+# 240s：与 news_analyzer 单条分析超时(240s)对齐，保证在途调用可完整返回；
+# 触发间隔仍为 90s，重叠轮次由 flock 直接跳过，不会堆积。
+TIMEOUT_SEC="${TIMEOUT_SEC:-240}"
 
-# 90 秒采集窗口
-export FETCH_WINDOW_MINUTES=1.5
+# 采集窗口（分钟）：python 侧 run_pipeline_90s.py 会读取该环境变量，默认 1.5
+export FETCH_WINDOW_MINUTES="${FETCH_WINDOW_MINUTES:-1.5}"
 
 START_TS=$(date +%s)
 START_STR=$(date '+%Y-%m-%d %H:%M:%S')

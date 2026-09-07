@@ -1,7 +1,7 @@
 # 金融新闻分析系统 项目理解总索引
 
-> 版本：v1.0
-> 更新时间：2026-09-07
+> 版本：v1.1
+> 更新时间：2026-09-07（v1.1：代码修复波 W1–W3 完成，技术债清单 §5 已同步 ✅/⚠️/未修复状态；实施清单见 `docs/fix_plan_2026-09-07.md`）
 > 用途：新对话、新成员或后续开发开始前的项目总入口。本文是文档体系的唯一索引；其他专项文档由它串联。
 >
 > 阅读本文后，应知道项目做什么、核心数据如何流转、代码和文档在哪里，以及不同任务需要继续阅读哪些材料。
@@ -169,22 +169,22 @@ Tushare → raw_news → selected_news → news_analysis_detail → 展示/推�
 
 ## 5. 已知技术债与不一致（修改前必读）
 
-> 完整的 43 项分级问题清单（S/L/R/O/Q 五级，含验证方式与修复优先级 P0–P3）见 **`docs/code_review_report_2026-09-07.md`**。以下为最高频踩坑项摘要：
+> 修复状态（2026-09-07 修复波 W1–W3 完成，见 `docs/fix_plan_2026-09-07.md`）：下面前 10 项已修复（✅）。**仍有 3 项未修复**：#11（`Reference` 命名，暂保留）、#13（v2 提示词未接入生产）、#14（relevance 语义复用）。完整 43 项清单与修复映射见 **`docs/code_review_report_2026-09-07.md`**。
 
-1. **C1（S2）双套 content_hash 实现**：`utils.py`（MD5，32 位）与 `news_fetcher.py`（blake2b，64 位）。生产采集用 blake2b；`scripts/backfill_12h_windows.py` 用 MD5 —— **回补数据与在线流水线判重必然失配，同一新闻会重复入库**。统一前不要混用。
-2. **C2（S1）`run_pipeline_once.py` 损坏**：编码损坏（中文变 `?`）+ 字符串缺引号 + 整段重复，`py_compile` 直接 SyntaxError，不可执行；保留仅为历史。
-3. **C3（S3）`check_db.py` 引用不存在的属性**（`c.host` 应为 `c.mysql_host` 等）→ 永远 `DB_FAIL`；部署文档的“期望 DB_OK”验收步骤当前无法通过。
-4. **C4（S4）测试套件红**：`tests/test_news_fetcher.py::test_sources_config` 断言 `tushare_src == "新浪财经"`（实际 `"sina"`），pytest 实跑 1 failed。
-5. **C5（S5）Flask 站 XSS**：`static/js/main.js` 把模型输出字段（shorttime/interest 等）未转义 `innerHTML`；静态站有 `escapeHtml`，动态站没有。
-6. **C6（S6）90s 流水线 analyze 无本批 hash 限制** + shell `timeout 85` < 单条分析 `timeout 240` → 积压时每轮被 SIGTERM、token 重复消耗。
-7. **C7（L1）时间口径混用**：`run_analysis_latest_20.py` 的 `create_time` 用 UTC，主链路用北京时间 naive，影响停摆告警判定。
-8. **C8（L3）三表 `content_hash` 双份冗余索引**（`index=True` + 显式 `Index`，已验证 ORM 元数据）。
-9. **C9（L4）`content_hash` 无 DB 唯一约束 + 查后插非原子**，无锁入口（`run_task.py`）并发可重复入库。
-10. **C10（R5）`requirements.txt` 缺 `gunicorn` 与 `pytest`**；`.alert_state.json` 未进 `.gitignore`。
-11. **`Reference` 列名**：历史遗留首字母大写，模型输出、ORM、DB 三方一致，勿单方面改名。
-12. **根目录与 scripts/ 重复脚本**：`export_recent_news_csv.py`、`run_recent_pipeline_and_export.py` 两处副本（前者内容完全一致），改一处需同步另一处。
-13. **`prompts_new.py`/`macro_baseline.py` 未接入生产链路**：当前 `news_analyzer.py` 仍用 `prompts.py`；v2 机制（基线注入 + confidence/uncertain 字段）已就绪但未切换，且 v2 新增字段在表中无对应列。
-14. **`raw_news.relevance` 语义复用**：既是“筛选器是否处理过”的状态位，又是“是否相关”的业务值（NULL=未处理）。
+1. ✅ **C1（S2）双套 content_hash 已统一为 blake2b**：`utils.py` 为唯一实现，`news_fetcher.py` 改为导入；旧 MD5 保留为 `compute_content_hash_legacy_md5` 仅供迁移对比。历史库内 MD5 行需执行 `scripts/normalize_content_hash.py --update`（先 `--dry-run`）归一（**尚未在生产库执行**）。
+2. ✅ **C2（S1）`run_pipeline_once.py` 已删除**（2026-09-07），功能由 `run_pipeline_manual.py` 覆盖。
+3. ✅ **C3（S3）`check_db.py` 已重写**为方言无关的 SQLAlchemy `SELECT 1` 连通性检查，MySQL/PostgreSQL 通用。
+4. ✅ **C4（S4）测试套件已修复**：断言改为 `tushare_src == "sina"`（`source_id` 仍为 `"新浪财经"`），pytest 现 13 passed。
+5. ✅ **C5（S5）Flask 站 XSS 已修复**：`static/js/main.js` 新增 `escapeHtml`，所有模型输出字段入库前转义。
+6. ✅ **C6（S6）90s 流水线已限制分析范围**：`analyze_news` 新增 `only_content_hashes` 参数；loop.sh `TIMEOUT_SEC` 由 85 提到 240，与单条分析超时对齐；并发由 flock 兜底。
+7. ✅ **C7（L1）时间口径已统一**：`run_analysis_latest_20.py` 改用 `now_beijing_naive()`。
+8. ✅ **C8（L3）冗余索引已清理**：`models.py` 移除列级 `index=True`；`init_db.py` 幂等 DROP 历史遗留 `ix_*` 索引。
+9. ⚠️ **C9（L4）`content_hash` 唯一约束未加**（破坏性 DB 变更，需先跑 `normalize_content_hash.py --dedupe` 清理历史重复，待用户批准）；并发侧已加固：`run_task.py` 加 flock、90s 循环本有 flock。
+10. ✅ **C10（R5）依赖已补齐**：`requirements.txt` 加 `gunicorn`；新增 `requirements-dev.txt`（pytest/ruff）；`.alert_state.json` 已入 `.gitignore`。
+11. **`Reference` 列名**：历史遗留首字母大写，模型输出、ORM、DB 三方一致，勿单方面改名（暂不迁移，保持 TODO）。
+12. ✅ **根目录与 scripts/ 重复脚本已删除**：仅保留 `scripts/` 版本（`export_recent_news_csv.py` / `run_recent_pipeline_and_export.py`）。
+13. **`prompts_new.py`/`macro_baseline.py` 未接入生产链路**：当前 `news_analyzer.py` 仍用 `prompts.py`；v2 机制（基线注入 + confidence/uncertain 字段）已就绪但未切换，且 v2 新增字段在表中无对应列。切换属 W4.1 可选工作流，需另行批准。
+14. **`raw_news.relevance` 语义复用**：既是“筛选器是否处理过”的状态位，又是“是否相关”的业务值（NULL=未处理）。设计约束，暂不改。
 
 ---
 
@@ -199,7 +199,8 @@ Tushare → raw_news → selected_news → news_analysis_detail → 展示/推�
 | 页面样式/交互 | Flask 站：`static/css/style.css`、`static/js/main.js`；静态站：`web_display/index.html` |
 | 推送文案 | `pipeline_notify_format.py` |
 | 告警阈值 | `.env`（`ALERT_*`） |
-| 采集窗口 | shell 导出 `FETCH_WINDOW_MINUTES` 或脚本内常量 |
+| 采集窗口 | python 读 `FETCH_WINDOW_MINUTES`（默认 1.5=90s；loop.sh 同步导出） |
+| 补偿筛选 | `.env`（`CATCHUP_STALE_MINUTES`=30、`CATCHUP_FILTER_LIMIT`=15） |
 | 展示域名/链接 | `.env`（`FEISHU_PUSH_WEB_BASE_URL`） |
 | Nginx/SSL | `scripts/nginx-domain-ssl.conf` |
 

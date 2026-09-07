@@ -168,8 +168,9 @@ def main() -> None:
                 lines.append("")
 
     def _token_sum(usages: list[dict[str, int]]) -> tuple[int, int, int]:
-        p = sum(int(u.get("prompt_tokens", 0)) for u in usages)
-        c = sum(int(u.get("completion_tokens", 0)) for u in usages)
+        # doubao_client 返回的用量键为 input_tokens / output_tokens / total_tokens
+        p = sum(int(u.get("input_tokens", 0)) for u in usages)
+        c = sum(int(u.get("output_tokens", 0)) for u in usages)
         t = sum(int(u.get("total_tokens", 0)) for u in usages)
         return p, c, t
 

@@ -44,6 +44,28 @@ def _create_index_if_missing(conn, inspector, table_name: str, index_name: str, 
     print(f"已为 {table_name} 创建索引 {index_name}")
 
 
+def _drop_legacy_column_indexes(conn, inspector, table_name: str, column_name: str = "content_hash") -> None:
+    """
+    清理历史遗留的冗余索引（列级 index=True 与显式 Index 同时声明导致每个
+    content_hash 上存在 ix_* 与 idx_* 两份索引）。幂等：不存在则跳过。
+    """
+    legacy = [
+        i["name"]
+        for i in inspector.get_indexes(table_name)
+        if i.get("name", "").startswith("ix_") and column_name in (i.get("column_names") or [])
+    ]
+    for name in legacy:
+        try:
+            if engine.dialect.name == "mysql":
+                conn.execute(text(f"DROP INDEX {name} ON {table_name}"))
+            else:
+                conn.execute(text(f"DROP INDEX IF EXISTS {name}"))
+            conn.commit()
+            print(f"已删除 {table_name} 的冗余索引 {name}")
+        except Exception as e:
+            print(f"删除 {table_name}.{name} 时: {e}")
+
+
 def main():
     dialect = engine.dialect.name
     print(f"当前数据库方言: {dialect}")
@@ -66,6 +88,8 @@ def main():
                 )
                 inspector = inspect(conn)
                 _create_index_if_missing(conn, inspector, tbl, idx_name, "content_hash")
+                inspector = inspect(conn)
+                _drop_legacy_column_indexes(conn, inspector, tbl)
                 inspector = inspect(conn)
             except Exception as e:
                 print(f"检查/更新 {tbl}.content_hash 时: {e}")

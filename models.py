@@ -35,7 +35,7 @@ class RawNews(Base):
         DateTime, nullable=False,
         default=now_beijing_naive,
     )
-    content_hash = Column(String(64), nullable=False, index=True)
+    content_hash = Column(String(64), nullable=False)
     relevance = Column(Boolean, nullable=True, default=None, comment="参数_相关性（1=相关，0=不相关）")
 
     __table_args__ = (Index("idx_raw_content_hash", "content_hash"),)
@@ -58,7 +58,7 @@ class SelectedNews(Base):
     direction = Column(Integer)  # 短期影响方向
     impact = Column(Integer)  # 短期影响程度
 
-    content_hash = Column(String(64), nullable=False, index=True)
+    content_hash = Column(String(64), nullable=False)
 
     __table_args__ = (Index("idx_selected_content_hash", "content_hash"),)
 
@@ -107,7 +107,7 @@ class NewsAnalysisDetail(Base):
     insight = Column(Text)
     conclusion = Column(Text)
 
-    content_hash = Column(String(64), nullable=False, index=True)
+    content_hash = Column(String(64), nullable=False)
 
     __table_args__ = (Index("idx_detail_content_hash", "content_hash"),)
 

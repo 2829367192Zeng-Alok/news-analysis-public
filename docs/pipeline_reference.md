@@ -221,13 +221,15 @@ Web 与静态展示都只读 `news_analysis_detail`：
 适用场景：
 
 - 服务器上高频调度；
-- 每轮只处理最近的 90 秒窗口。
+- 每轮只处理最近的 N 秒/分钟窗口（`FETCH_WINDOW_MINUTES`，默认 1.5）。
 
 特点：
 
 - 只处理本批新增哈希；
+- **补偿筛选**：存在超过 `CATCHUP_STALE_MINUTES`（默认 30 分钟）仍未筛选的 raw_news 时，限量（`CATCHUP_FILTER_LIMIT`，默认 15）补筛，避免故障窗口数据滞留；
+- **按批分析**：未触发补偿时，`analyze_news(only_content_hashes=本批 hash)` 只分析本批，避免历史积压把单轮拖过 shell timeout（`TIMEOUT_SEC` 默认 240，等于单条分析超时）；
 - 每阶段有耗时与 token 统计；
-- 无新数据时直接跳过筛选与分析。
+- 无新数据时直接跳过本批筛选。
 
 ### 6.3 `run_pipeline_manual.py`
 

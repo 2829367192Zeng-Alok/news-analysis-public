@@ -76,9 +76,9 @@ python scripts/migrate_mysql_to_postgres.py
 
 ## 已知注意事项（详见总索引 §5 与 `docs/code_review_report_2026-09-07.md`）
 
-- `run_pipeline_once.py` 存在损坏片段，**不要直接运行**，用 `run_pipeline_manual.py`；
-- `utils.compute_content_hash`（MD5）与 `news_fetcher.compute_content_hash`（blake2b）为两套并存实现，混用前需先统一；
-- `check_db.py` 当前引用错误属性会输出 `DB_FAIL`（修复前不要据此判断库连通性）；
+- `run_pipeline_once.py` 已于 2026-09-07 删除（原文件损坏）；单轮手动执行用 `run_pipeline_manual.py`；
+- `utils.compute_content_hash` 与 `news_fetcher.compute_content_hash` 已统一为 blake2b（`utils.py` 唯一实现）；历史 MD5 数据需 `scripts/normalize_content_hash.py --update` 归一（先 `--dry-run`）；
+- `check_db.py` 已修复（方言无关）；部署验收可据此判断库连通性；
 - `news_analysis_detail.Reference` 为历史遗留列名，勿擅自改名；
 - `.env` 与 `~/.financial_news_analysis.env` 含密钥，禁止提交或写入文档。
 
