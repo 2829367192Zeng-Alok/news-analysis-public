@@ -12,7 +12,22 @@ def now_beijing_naive() -> datetime:
 
 
 def compute_content_hash(title: str, content: str) -> str:
-    """基于标题和正文计算内容哈希，用于跨来源去重。"""
+    """
+    基于标题和正文计算内容哈希，用于跨来源去重。
+
+    统一实现：blake2b（64 hex 字符）。
+    历史上本函数曾是 MD5 实现，news_fetcher 曾自带 blake2b 副本；两者已合并到这里，
+    采集、回补、评估脚本必须全部经由本函数计算，禁止再各自实现。
+    """
+    raw = f"{title}\n{content}".encode("utf-8", errors="replace")
+    return hashlib.blake2b(raw, digest_size=32).hexdigest()  # 32 bytes = 64 hex chars
+
+
+def compute_content_hash_legacy_md5(title: str, content: str) -> str:
+    """
+    旧版 MD5 内容哈希（32 hex）。仅用于迁移脚本对比/排查历史数据，勿在生产代码中使用。
+    分隔符为 "::"，与当前 blake2b 实现的 "\\n" 不同，两者结果不可互换。
+    """
     m = hashlib.md5()
     key = (title or "") + "::" + (content or "")
     m.update(key.encode("utf-8"))

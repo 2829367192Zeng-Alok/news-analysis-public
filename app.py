@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime
+import os
 from typing import Generator, List, Dict, Any, Optional
 
 from flask import Flask, jsonify, request, render_template
@@ -27,9 +28,19 @@ def _parse_dt(value: Optional[str]) -> Optional[datetime]:
     """将 ISO 格式字符串解析为 datetime，失败返回 None。"""
     if not value:
         return None
+    raw = value.strip()
+    if not raw:
+        return None
+    # 兼容 JS toISOString()（带 Z）与毫秒精度
+    try:
+        normalized = raw.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(normalized)
+        return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
+    except ValueError:
+        pass
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
         try:
-            return datetime.strptime(value, fmt)
+            return datetime.strptime(raw, fmt)
         except ValueError:
             continue
     return None
@@ -170,5 +181,7 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    # 生产环境请用 gunicorn；debug 仅限本地开发显式开启（FLASK_DEBUG=1）
+    debug = os.getenv("FLASK_DEBUG", "").strip().lower() in ("1", "true", "yes")
+    app.run(host="0.0.0.0", port=8000, debug=debug)
 

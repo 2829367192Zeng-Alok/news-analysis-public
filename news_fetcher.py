@@ -20,7 +20,7 @@ from sqlalchemy import select
 from config import settings
 from models import RawNews, get_db_session
 from news_sources import TushareSourceConfig, get_sources_by_ids
-from utils import now_beijing_naive, parse_news_datetime
+from utils import compute_content_hash, now_beijing_naive, parse_news_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -30,17 +30,6 @@ RETRY_DELAY = 2
 TUSHARE_DATETIME_FMT = "%Y-%m-%d %H:%M:%S"
 # 北京时间 UTC+8，用于请求 API 的时间范围（避免用 UTC 导致时间窗错位拉不到数据）
 TZ_BEIJING = timezone(timedelta(hours=8))
-
-
-def compute_content_hash(title: str, content: str) -> str:
-    """
-    计算新闻内容哈希，用于去重。
-    使用 blake2b（标准库内置，比 MD5 更安全，速度相当）。
-    取前 64 个十六进制字符（256 bit），与原 MD5 字段长度兼容。
-    """
-    import hashlib
-    raw = f"{title}\n{content}".encode("utf-8", errors="replace")
-    return hashlib.blake2b(raw, digest_size=32).hexdigest()  # 32 bytes = 64 hex chars
 
 
 def _get_tushare_client():

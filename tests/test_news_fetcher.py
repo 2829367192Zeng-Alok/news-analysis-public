@@ -24,7 +24,17 @@ def test_compute_content_hash():
     h2 = compute_content_hash("标题", "内容")
     assert h1 == h2
     assert compute_content_hash("A", "B") != compute_content_hash("B", "A")
-    assert len(h1) == 32
+    # 统一 blake2b 实现：32 bytes -> 64 hex 字符
+    assert len(h1) == 64
+    # 不同标题但内容相同时不应判为同一条
+    assert compute_content_hash("A", "B") != compute_content_hash("B", "A")
+
+
+def test_compute_content_hash_legacy_md5():
+    """旧 MD5 实现保留给迁移对比用，两者结果必须不同（分隔符与算法均不同）。"""
+    from utils import compute_content_hash, compute_content_hash_legacy_md5
+    assert len(compute_content_hash_legacy_md5("A", "B")) == 32
+    assert compute_content_hash("A", "B") != compute_content_hash_legacy_md5("A", "B")
 
 
 def test_parse_news_datetime():
@@ -50,14 +60,16 @@ def test_sources_config():
     assert SOURCE_ID_SINA in ids
     filtered = get_sources_by_ids([SOURCE_ID_SINA])
     assert len(filtered) == 1
-    assert filtered[0].tushare_src == "新浪财经"
+    # source_id（存库/展示）与 tushare_src（API 参数）是两个字段，勿混淆
+    assert filtered[0].source_id == SOURCE_ID_SINA
+    assert filtered[0].tushare_src == "sina"
     assert get_sources_by_ids(None) == default
 
 
 def test_dedupe_by_hash():
     from news_fetcher import _dedupe_by_hash
     from datetime import datetime
-    now = datetime.utcnow()
+    now = datetime.now()
     # 两条相同内容应只留一条
     recs = [
         ("标题", "内容", now, "新浪财经"),
@@ -77,7 +89,7 @@ def test_dedupe_by_hash():
 def test_normalize_record():
     from news_fetcher import _normalize_record
     from datetime import datetime
-    now = datetime.utcnow()
+    now = datetime.now()
     r = {"title": " 标题 ", "content": " 正文 ", "pub_time": "2025-03-01 10:00:00", "src": "新浪财经"}
     t = _normalize_record(r, "新浪财经", now)
     assert t is not None

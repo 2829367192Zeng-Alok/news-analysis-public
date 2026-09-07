@@ -20,6 +20,14 @@ function directionClass(direction) {
   return "badge badge-neutral";
 }
 
+// 模型输出字段（来自外部新闻 → LLM → 数据库）不可信，进 innerHTML 前必须转义。
+function escapeHtml(s) {
+  if (s == null) return "";
+  const div = document.createElement("div");
+  div.textContent = String(s);
+  return div.innerHTML;
+}
+
 let currentNewsId = null;
 
 async function loadStats() {
@@ -103,20 +111,20 @@ async function loadDetail(id) {
 
     blocks.push({
       title: "核心结论",
-      content: data.conclusion || "无",
+      content: data.conclusion ? escapeHtml(data.conclusion) : "无",
     });
 
     blocks.push({
       title: "投资启示",
-      content: data.insight || "无",
+      content: data.insight ? escapeHtml(data.insight) : "无",
     });
 
     blocks.push({
       title: "时间维度结论",
       content: [
-        data.shorttime ? `短期：${data.shorttime}` : null,
-        data.midtime ? `中期：${data.midtime}` : null,
-        data.longtime ? `长期：${data.longtime}` : null,
+        data.shorttime ? `短期：${escapeHtml(data.shorttime)}` : null,
+        data.midtime ? `中期：${escapeHtml(data.midtime)}` : null,
+        data.longtime ? `长期：${escapeHtml(data.longtime)}` : null,
       ]
         .filter(Boolean)
         .join("<br>") || "无",
@@ -126,11 +134,11 @@ async function loadDetail(id) {
       title: "各维度分析",
       content:
         [
-          data.interest ? `实际利率：${data.interest}` : null,
-          data.dollar ? `美元指数：${data.dollar}` : null,
-          data.warrisk ? `地缘政治风险：${data.warrisk}` : null,
-          data.liquidity ? `资本市场流动性：${data.liquidity}` : null,
-          data.emotion ? `市场情绪：${data.emotion}` : null,
+          data.interest ? `实际利率：${escapeHtml(data.interest)}` : null,
+          data.dollar ? `美元指数：${escapeHtml(data.dollar)}` : null,
+          data.warrisk ? `地缘政治风险：${escapeHtml(data.warrisk)}` : null,
+          data.liquidity ? `资本市场流动性：${escapeHtml(data.liquidity)}` : null,
+          data.emotion ? `市场情绪：${escapeHtml(data.emotion)}` : null,
         ]
           .filter(Boolean)
           .join("<br>") || "无",
