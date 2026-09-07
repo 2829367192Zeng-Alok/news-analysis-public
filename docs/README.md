@@ -1,3 +1,13 @@
+> ⚠️ **本文是历史版 README 副本**（内容以早期部署为主）。当前项目入口为：
+>
+> - 项目根 [`README.md`](../README.md)（项目概览与快速开始）
+> - [`docs/project_context_index.md`](./project_context_index.md)（文档总纲，唯一索引入口）
+> - [`docs/deployment_reference.md`](./deployment_reference.md)（部署与运维权威参考）
+>
+> 下文仅作历史参考，其中定时频率等描述与当前实现可能不一致。
+
+---
+
 # 金融新闻分析系统
 
 新闻采集（Tushare）→ AI 筛选（豆包）→ AI 详细分析（豆包）→ 云数据库存储，Web 展示。部署于阿里云 ECS，通过内网连接云数据库 RDS。
@@ -55,8 +65,8 @@ ssh aliyun
 | 1 | 在 ECS 上创建目录，如 `mkdir -p /root/workspace/project`，并上传或 git clone 本仓库到 `financial-news-analysis` |
 | 2 | `cd financial-news-analysis && pip install -r requirements.txt` |
 | 3 | 在 ECS 上配置 `.env` 或 `~/.financial_news_analysis.env`，**DB_HOST 填 RDS 内网地址** |
-| 4 | 初始化数据库表：`python -c "from models import Base, engine; Base.metadata.create_all(engine)"` |
-| 5 | 配置阿里云定时任务（如每 10 秒执行）：`python run_task.py` |
+| 4 | 初始化数据库表：`python init_db.py` |
+| 5 | 配置阿里云定时任务（当前为每 90 秒执行）：`bash run_pipeline_90s_loop.sh` |
 | 6 | 启动 Web：`gunicorn -w 2 -b 0.0.0.0:8000 "app:app"` 或 `python app.py` |
 | 7 | （可选）Nginx 反向代理、开放安全组端口 8000 |
 
@@ -67,23 +77,26 @@ ssh aliyun
 - [ ] 已配置 TUSHARE_TOKEN、DOUBAO_API_KEY
 - [ ] **DB_HOST 使用 RDS 内网地址**，且 ECS 与 RDS 同地域/同 VPC
 - [ ] 数据库已建库 `news_analysis`，且执行过表结构初始化
-- [ ] 定时任务可正常执行 `python run_task.py`（查看日志无报错）
+- [ ] 定时任务可正常执行（查看 `logs/pipeline_1min.log` 无报错）
 - [ ] Web 服务可访问 `/api/news`、`/api/stats`
 
 ## 项目结构
 
-- `config.py` - 配置（数据库、Tushare、豆包），支持 .env 与内网 DB
+- `config.py` - 配置（数据库、Tushare、豆包、飞书），支持 .env 与内网 DB
 - `models.py` - 表结构 raw_news / selected_news / news_analysis_detail
 - `news_fetcher.py` - Tushare 采集、去重、写入 raw_news
 - `news_filter.py` - 豆包筛选，写入 selected_news
 - `news_analyzer.py` - 豆包详细分析，写入 news_analysis_detail
 - `run_task.py` - 定时任务入口（采集→筛选→分析），带日志与分步异常处理
+- `run_pipeline_90s.py`（+ `run_pipeline_90s_loop.sh`）- 90 秒窗口生产流水线
 - `app.py` - Flask API 与前端
-- `doubao_client.py` - 豆包 API 封装（含重试）
+- `doubao_client.py` - 豆包 API 封装（含重试与异常分类）
 - `web_display/` - 静态展示页（Tabler 模板，读 `data/feed.json`）
-- `sync_news_to_display.py` - 将 news_analysis_detail 导出到 `web_display/data/feed.json`，供静态页展示；可配合 cron 定时更新
+- `sync_news_to_display.py` - 将 news_analysis_detail 导出到 `web_display/data/feed.json`
+- `scripts/migrate_mysql_to_postgres.py` - MySQL 全量迁移到 PostgreSQL（3 张核心表）
 
 ## 注意事项
 
 - 配置文件与 `.env` 含敏感信息，不要提交到版本库。
-- 定时任务频率较高（如 10 秒）时，注意 Tushare/豆包 API 调用限制与配额。
+- 定时任务频率较高，注意 Tushare/豆包 API 调用限制与配额。
+- 完整环境变量、告警与运维说明以 `docs/deployment_reference.md` 为准。

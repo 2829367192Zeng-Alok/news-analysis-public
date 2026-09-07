@@ -1,125 +1,103 @@
 # 金融新闻分析系统
 
-新闻采集（Tushare）→ AI 筛选（豆包）→ AI 详细分析（豆包）→ 云数据库存储，Web 展示。部署于阿里云 ECS，通过内网连接云数据库 RDS。
+新闻采集（Tushare）→ AI 筛选（豆包）→ AI 详细分析（豆包）→ 云数据库存储 → Web 展示 + 飞书推送。部署于阿里云 ECS，通过内网连接云数据库 RDS。
 
-## 本地 / ECS 配置
+> **新对话 / 新成员请先阅读 [docs/project_context_index.md](./docs/project_context_index.md)** —— 它是项目文档总索引，串联全部模块文档，并说明不同任务应继续读哪些材料、哪些是历史文档。
 
-### 1. 配置文件与密钥（默认地址）
+## 系统概览
 
-- **环境变量**：优先从环境变量读取，无需在代码中写密钥。
-- **默认配置文件**（可选）：  
-  - 项目目录下的 `.env`  
-  - 用户目录下的 `~/.financial_news_analysis.env`  
-  复制 `.env.example` 为上述任一文件并填写真实值。安装依赖后会自动通过 `python-dotenv` 加载。
-
-### 2. 数据库连接（ECS 必做）
-
-在 **ECS 上** 运行时应使用 RDS **内网地址**，以降低延迟并避免公网流量。项目支持 MySQL / PostgreSQL 双栈：
-
-1. 登录 [阿里云 RDS 控制台](https://rdsnext.console.aliyun.com/)
-2. 选择实例 → **数据库连接** → 复制 **内网地址**（与 ECS 同地域、同 VPC 时可用）
-3. 在 ECS 上设置环境变量或写入配置文件，例如（MySQL）：
-   ```bash
-   export DB_HOST=rm-xxxxx.mysql.rds.aliyuncs.com   # 替换为你的内网地址
-   export DB_PORT=3306
-   export DB_USER=你的数据库用户
-   export DB_PASSWORD=你的数据库密码
-   export DB_NAME=news_analysis
-   ```
-  PostgreSQL 示例：
-  ```bash
-  export DB_DIALECT=postgresql
-  export POSTGRES_HOST=your-rds-pg-inner-host
-  export POSTGRES_PORT=5432
-  export POSTGRES_USER=your_user
-  export POSTGRES_PASSWORD=your_password
-  export POSTGRES_DB_NAME=news_analysis
-  # 可选：阿里云 RDS PostgreSQL 通常使用 require
-  export POSTGRES_SSLMODE=require
-  ```
-  或在 `~/.financial_news_analysis.env` / 项目目录 `.env` 中配置上述变量。
-
-### 3. SSH 连接 ECS（开发/部署用）
-
-本机通过 SSH 连接阿里云 ECS 时，请在本机维护 SSH 配置（默认路径 `~/.ssh/config`），例如：
+一条新闻的完整生命周期：
 
 ```text
-Host aliyun
-    HostName <你的 ECS 公网 IP>
-    User root
-    Port 22
-    IdentityFile C:/Users/28293/.ssh/id_ed25519
+Tushare（华尔街见闻 / 新浪财经）
+  → 采集 + 多层 content_hash 去重 → raw_news
+  → 豆包 AI 筛选（相关性/方向/强度）→ selected_news
+  → 豆包 AI 详细分析（五维传导路径 + 短中长期结论）→ news_analysis_detail
+  → Flask 动态站 / Nginx 静态展示站 / 飞书群推送
 ```
 
-将 `HostName` 替换为 ECS 公网 IP。连接命令：
+- 定时任务每 90 秒触发一轮（`run_pipeline_90s_loop.sh`，flock 防并发）；
+- 三张表以 `content_hash` 关联，流水线可安全重跑；
+- 飞书双链路：分析结果推送 + 停摆/API 异常告警（含恢复通知与告警抑制）。
+
+## 模块速览
+
+| 模块 | 代码 | 文档 |
+|---|---|---|
+| 配置 | `config.py` | `docs/deployment_reference.md` §2 环境变量 |
+| 数据层 | `models.py`、`init_db.py` | `docs/project_database_schema_reference.md` |
+| 采集 | `news_sources.py`、`news_fetcher.py` | `docs/pipeline_reference.md` §2 |
+| 筛选 | `news_filter.py`、`prompts.py` | `docs/pipeline_reference.md` §3 |
+| 分析 | `news_analyzer.py`、`macro_baseline.py` | `docs/pipeline_reference.md` §4 |
+| LLM 中台 | `doubao_client.py` | `docs/llm_architecture_reference.md` |
+| Web 动态站 | `app.py`、`templates/`、`static/` | `docs/web_display_reference.md` |
+| 静态展示站 | `web_display/`、`sync_news_to_display.py` | `docs/web_display_reference.md` §2 |
+| 飞书推送/告警 | `feishu_webhook/`、`pipeline_notify_format.py` | `docs/feishu_notification_reference.md` |
+| 定时任务 | `run_task.py`、`run_pipeline_90s.py(+loop.sh)` | `docs/pipeline_reference.md` §6 |
+| 脚本全集 | `scripts/`、`tests/` | `docs/project_script_architecture.md` |
+
+## 快速开始（本地）
 
 ```bash
-ssh aliyun
+pip install -r requirements.txt
+cp .env.example .env        # 填 DB / TUSHARE_TOKEN / DOUBAO_API_KEY（及可选 FEISHU_*）
+python init_db.py           # 建表 + 补列（幂等）
+python check_db.py          # 期望输出 DB_OK
+python run_pipeline_manual.py           # 手动跑一轮（默认 60 分钟窗口）
+python app.py                           # 起动态站 http://localhost:8000
+python sync_news_to_display.py          # 导出静态站 feed.json
+pytest tests/ -q                        # 单元测试
 ```
 
-在 ECS 上项目路径为：`/root/workspace/project/financial-news-analysis`（可按需调整）。
+## 部署（ECS）
 
-## 部署步骤（ECS）
+完整拓扑、环境变量清单、验收清单与运维手册见 **[docs/deployment_reference.md](./docs/deployment_reference.md)**。核心步骤：
 
 | 步骤 | 说明 |
-|------|------|
-| 1 | 在 ECS 上创建目录，如 `mkdir -p /root/workspace/project`，并上传或 git clone 本仓库到 `financial-news-analysis` |
-| 2 | `cd financial-news-analysis && pip install -r requirements.txt` |
-| 3 | 在 ECS 上配置 `.env` 或 `~/.financial_news_analysis.env`，**DB_HOST 填 RDS 内网地址** |
-| 4 | 初始化数据库表：`python init_db.py` |
-| 5 | 配置阿里云定时任务（如每 10 秒执行）：`python run_task.py` |
-| 6 | 启动 Web：`gunicorn -w 2 -b 0.0.0.0:8000 "app:app"` 或 `python app.py` |
-| 7 | （可选）Nginx 反向代理、开放安全组端口 8000 |
+|---|---|
+| 1 | 上传仓库到 ECS `/root/workspace/project/financial-news-analysis` |
+| 2 | `pip install -r requirements.txt`，配置 `.env`（**DB_HOST 用 RDS 内网地址**） |
+| 3 | `python init_db.py` 初始化表结构 |
+| 4 | 阿里云定时任务每 90 秒执行 `bash run_pipeline_90s_loop.sh` |
+| 5 | Web：`gunicorn -w 2 -b 0.0.0.0:8000 "app:app"`（建议 systemd 守护） |
+| 6 | 静态站：部署 `web_display/` 到 Nginx，常驻 `scripts/sync_loop.sh` 同步 |
 
-## 部署检查清单
-
-- [ ] ECS 已安装 Python 3.8+、pip
-- [ ] `requirements.txt` 已安装
-- [ ] 已配置 TUSHARE_TOKEN、DOUBAO_API_KEY
-- [ ] **DB_HOST 使用 RDS 内网地址**，且 ECS 与 RDS 同地域/同 VPC
-- [ ] 数据库已建库 `news_analysis`，且执行过表结构初始化
-- [ ] 定时任务可正常执行 `python run_task.py`（查看日志无报错）
-- [ ] Web 服务可访问 `/api/news`、`/api/stats`
-
-## 项目结构
-
-- `config.py` - 配置（数据库、Tushare、豆包），支持 .env 与内网 DB
-- `models.py` - 表结构 raw_news / selected_news / news_analysis_detail
-- `news_fetcher.py` - Tushare 采集、去重、写入 raw_news
-- `news_filter.py` - 豆包筛选，写入 selected_news
-- `news_analyzer.py` - 豆包详细分析，写入 news_analysis_detail
-- `run_task.py` - 定时任务入口（采集→筛选→分析），带日志与分步异常处理
-- `app.py` - Flask API 与前端
-- `doubao_client.py` - 豆包 API 封装（含重试）
-- `scripts/migrate_mysql_to_postgres.py` - MySQL 全量迁移到 PostgreSQL（3 张核心表）
-
-## MySQL 迁移到 PostgreSQL
-
-### 1) 配置双库连接
-
-- 源库（MySQL）使用：`MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DB_NAME`
-- 目标库（PostgreSQL）使用：`POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB_NAME`
-- 运行时主库切换：`DB_DIALECT=mysql` 或 `DB_DIALECT=postgresql`
-
-### 2) 先初始化 PostgreSQL 表结构
+### 数据库切换（MySQL → PostgreSQL）
 
 ```bash
+# 1) 配置 MYSQL_* 与 POSTGRES_* 双库变量
+# 2) 初始化 PG 表结构
 DB_DIALECT=postgresql python init_db.py
-```
-
-### 3) 执行全量迁移
-
-```bash
+# 3) 全量迁移（默认清空目标表，--no-truncate 为追加）
 python scripts/migrate_mysql_to_postgres.py
 ```
 
-默认会清空目标表后全量导入。若需要追加而非清空：
+回滚说明见 `words/postgresql_to_mysql_rollback.md`。
 
-```bash
-python scripts/migrate_mysql_to_postgres.py --no-truncate
+## 已知注意事项（详见总索引 §5 与 `docs/code_review_report_2026-09-07.md`）
+
+- `run_pipeline_once.py` 存在损坏片段，**不要直接运行**，用 `run_pipeline_manual.py`；
+- `utils.compute_content_hash`（MD5）与 `news_fetcher.compute_content_hash`（blake2b）为两套并存实现，混用前需先统一；
+- `check_db.py` 当前引用错误属性会输出 `DB_FAIL`（修复前不要据此判断库连通性）；
+- `news_analysis_detail.Reference` 为历史遗留列名，勿擅自改名；
+- `.env` 与 `~/.financial_news_analysis.env` 含密钥，禁止提交或写入文档。
+
+## 文档体系
+
+```text
+docs/
+├── project_context_index.md            # 文档总纲（唯一入口，先读）
+├── code_review_report_2026-09-07.md    # 代码问题全景审查（43 项分级 + 修复优先级）
+├── pipeline_reference.md               # 数据流水线 L1
+├── project_database_schema_reference.md# 数据库结构 L1
+├── llm_architecture_reference.md       # LLM 调用架构 L1
+├── web_display_reference.md            # Web 双形态展示 L1
+├── deployment_reference.md             # 部署与运维 L1
+├── project_script_architecture.md      # 脚本权威登记 L1
+├── feishu_notification_reference.md    # 飞书推送与告警 L1
+├── 代码架构说明.md                      # 历史版架构说明（已被 L1 取代）
+├── 金融新闻分析系统_d1f1a06f.plan.md    # 早期实施计划（仅历史参考）
+└── deployment/                          # 历史逐步部署操作记录
 ```
 
-## 注意事项
-
-- 配置文件与 `.env` 含敏感信息，不要提交到版本库。
-- 定时任务频率较高（如 10 秒）时，注意 Tushare/豆包 API 调用限制与配额。
+修改代码后，请按 `docs/project_context_index.md` §10 的要求同步更新对应文档与总索引。
