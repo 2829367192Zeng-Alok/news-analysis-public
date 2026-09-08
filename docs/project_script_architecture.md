@@ -10,13 +10,13 @@
 
 | 脚本 | 职责 | 典型运行方式 | 备注 |
 |---|---|---|---|
-| `run_task.py` | 一轮完整流水线（采集→筛选→分析→推送→健康检查），不限本批哈希；已加 flock 单实例锁 | 阿里云定时命令 / 手动 | 各步独立 try/except |
-| `run_pipeline_90s.py` | 90 秒窗口流水线：本批筛选 + 滞留补偿筛选 + 按批分析 | `run_pipeline_90s_loop.sh` 包裹，阿里云每 90 秒触发 | 窗口读 `FETCH_WINDOW_MINUTES`；补偿阈值见 `CATCHUP_*` |
-| `pipeline_daemon.py` | 常驻轮询守护（默认 20s 一轮），替代阿里云触发：采集→筛选→补偿→分析→推送→**主动刷新 feed.json** | systemd 托管 / `--once` 运维验证 | **与 90s 触发二选一，勿并行**；锁名 `financial_news_daemon` |
+| `run_task.py` | 一轮完整流水线（采集→筛选→分析→推送→健康检查），不限本批哈希；已加 flock 单实例锁 | 手动 / 运维 | 各步独立 try/except |
+| `pipeline_daemon.py` | **✅ 生产调度（已确定）**：常驻轮询（默认 20s 一轮）采集→筛选→补偿→分析→推送→**主动刷新 feed.json** | systemd 托管（`deploy/financial-news-daemon.service`）/ `--once` 运维验证 | 阿里云 90s 触发已弃用；锁名 `financial_news_daemon` |
+| `run_pipeline_90s.py` | 90 秒窗口流水线：本批筛选 + 滞留补偿筛选 + 按批分析（**备选，随阿里云触发一同弃用**） | `run_pipeline_90s_loop.sh` 包裹 | 窗口读 `FETCH_WINDOW_MINUTES`；补偿阈值见 `CATCHUP_*` |
 | `run_pipeline_manual.py` | 可配置窗口（`FETCH_WINDOW_MINUTES`，默认 60 分钟）流水线，写 `pipeline_report.txt` | 手动 / 运维 | 适合本地复盘 |
 | ~~`run_pipeline_once.py`~~ | （已删除 2026-09-07，原文件损坏；用 manual 代替） | — | — |
 | `run_analysis_latest_20.py` | 对库中最新 20 条 `raw_news` 逐条筛选+分析并写库，导出 `analysis_report.txt` | 服务器上补分析/抽查 | 时间口径与主链路一致（北京时间） |
-| `run_pipeline_90s_loop.sh` | 90 秒触发的外壳：flock 并发保护 + timeout（默认 240s）+ 日志落 `logs/pipeline_1min.log` | `bash run_pipeline_90s_loop.sh` | 部署在 ECS |
+| `run_pipeline_90s_loop.sh` | 90 秒触发的外壳：flock 并发保护 + timeout（默认 240s）+ 日志落 `logs/pipeline_1min.log`（**备选，已弃用**） | `bash run_pipeline_90s_loop.sh` | 保留供回退 |
 | `sync_news_to_display.py` | 导出 `news_analysis_detail` → `web_display/data/feed.json`（原子写 tmp+replace；核心逻辑 `run_sync()` 供 daemon 复用） | cron / `scripts/sync_loop.sh` / daemon 调用 | `--no-change` 增量跳过 |
 | `init_db.py` | 建表 + 补列（含 v2 的 confidence/uncertain）+ 索引 + 清理遗留 `ix_*` + best-effort 创建 `uq_raw_content_hash` 唯一索引 + content 类型修正 | 新环境 / 迁移后各跑一次 | 幂等 |
 | `check_db.py` | SQLAlchemy 连通性检查（方言无关，打印 `DB_OK`/`DB_FAIL`） | 部署排障 | — |
@@ -98,15 +98,15 @@ pytest tests/ -q
 ## 4. 脚本间依赖关系
 
 ```text
-run_pipeline_90s_loop.sh ──> run_pipeline_90s.py ─┐
-阿里云定时任务 ───────────> run_task.py ──────────┤
-pipeline_daemon.py（常驻，二选一）────────────────┤
-                                                   ├─> news_fetcher / news_filter / news_analyzer
-手动 ─────────────────────> run_pipeline_manual.py ┘        │
-                                                            ▼
-                                              doubao_client / models / config
-
-sync_loop.sh / pipeline_daemon ──> sync_news_to_display.run_sync() ──> web_display/data/feed.json ──> 静态站
+systemd: pipeline_daemon.py（✅ 生产调度）────┐
+run_pipeline_90s_loop.sh（备选，已弃用）─> run_pipeline_90s.py ─┤
+手动 ─────────────> run_task.py / run_pipeline_manual.py ───────┤
+                                                               ├─> news_fetcher / news_filter / news_analyzer
+                                                                      │
+                                                                      ▼
+                                                        doubao_client / models / config
+                                                                      
+pipeline_daemon / sync_loop ──> sync_news_to_display.run_sync() ──> web_display/data/feed.json ──> 静态站
 
 backfill_12h_windows.py ──> （复用 news_fetcher 内部函数）──> 三表回补
 migrate_mysql_to_postgres.py ──> config.db（双 URL）──> PG 三表

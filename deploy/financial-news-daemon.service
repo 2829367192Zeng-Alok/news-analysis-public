@@ -1,0 +1,38 @@
+# systemd 单元模板：金融新闻流水线常驻守护（服务器内 20 秒轮询）
+#
+# 部署（ECS，root）：
+#   cp deploy/financial-news-daemon.service /etc/systemd/system/financial-news-daemon.service
+#   systemctl daemon-reload && systemctl enable --now financial-news-daemon
+#   journalctl -u financial-news-daemon -f          # 观察首轮
+#
+# 说明：
+# - 不使用 EnvironmentFile：config.py 启动时会自动加载工作目录下的 .env
+#   （python-dotenv），与手动 `python pipeline_daemon.py --once` 的配置来源一致，
+#   同时规避 systemd 对 .env 语法（引号/注释）的解析差异。
+# - 停用阿里云 90s 定时任务后再启用本服务，两套调度不可同时运行。
+
+[Unit]
+Description=Financial news pipeline daemon (20s polling: fetch -> filter -> catch-up -> analyze -> push -> refresh feed)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/workspace/project/financial-news-analysis
+ExecStart=/usr/local/bin/python3 pipeline_daemon.py
+Restart=always
+RestartSec=10
+User=root
+
+# 日志走 journald；如需文件日志可改为：
+# StandardOutput=append:/root/workspace/project/financial-news-analysis/logs/daemon.log
+# StandardError=inherit
+StandardOutput=journal
+StandardError=journal
+
+# 温和的停止行为：SIGTERM 后给 30s 收尾（轮内 API 调用多为短超时，30s 足够）
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -9,14 +9,15 @@
 ## 1. 部署拓扑
 
 ```text
-阿里云定时任务（每 90 秒）
-   │  触发
+systemd: financial-news-daemon.service（常驻 20s 轮询）
+   │  ExecStart: python3 pipeline_daemon.py
    ▼
 ECS（/root/workspace/project/financial-news-analysis）
-   ├── run_pipeline_90s_loop.sh（flock 防并发 + timeout 240s）
-   │      └── run_pipeline_90s.py（采集→补偿筛选→本批筛选→按批分析→推送→健康检查）
-   ├── gunicorn app:app（Flask 动态站 :8000）
-   └── sync_loop.sh ──> sync_news_to_display.py ──> Nginx 静态展示站
+   ├── pipeline_daemon.py（采集→补偿筛选→本批筛选→按批分析→飞书推送→健康检查→刷新 feed）
+   │      └──（备选，已弃用：阿里云 90s 触发 run_pipeline_90s_loop.sh → run_pipeline_90s.py）
+   ├── gunicorn app:app（Flask 动态站 :8000，--threads 8 支持 SSE）
+   │      └── GET /api/stream（SSE 实时推送）
+   └── daemon 有新分析时直接刷新 web_display/data/feed.json（无需 sync_loop）
    │
    ▼（RDS 内网连接）
 RDS（MySQL 或 PostgreSQL，库名 news_analysis）
@@ -83,17 +84,17 @@ RDS（MySQL 或 PostgreSQL，库名 news_analysis）
 1. 上传/clone 仓库到 `/root/workspace/project/financial-news-analysis`
 2. `pip install -r requirements.txt`
 3. 配置 `.env`（DB 用 RDS 内网地址）
-4. `python init_db.py`（建表 + 补列，幂等可重复跑）
-5. 配置阿里云定时任务：每 90 秒执行 `bash run_pipeline_90s_loop.sh`
-6. 启动 Web：`gunicorn -w 2 -b 0.0.0.0:8000 "app:app"`（systemd/supervisor 守护）
-7. 静态展示：部署 `web_display/` 到 Nginx 站点根，并以 `scripts/sync_loop.sh` 或 cron 常驻同步
+4. `python init_db.py`（建表 + 补列 + 索引，幂等可重复跑）
+5. 调度：systemd 托管常驻守护（单元模板 `deploy/financial-news-daemon.service`，阿里云定时任务已弃用）
+6. 启动 Web：`gunicorn -w 2 --threads 8 -b 0.0.0.0:8000 app:app`（systemd/supervisor 守护）
+7. 静态展示：部署 `web_display/` 到 Nginx 站点根（daemon 会自动刷新 feed.json，无需 sync_loop）
 8. 安全组：放行 8000（或仅 Nginx 80/443）
 
 验收检查：
 
 - [ ] `python check_db.py` 输出 `DB_OK`
-- [ ] 定时任务日志（`logs/pipeline_1min.log`）有正常轮次
-- [ ] `/api/news`、`/api/stats` 可访问
+- [ ] `systemctl status financial-news-daemon` active，`journalctl -u financial-news-daemon` 有正常轮次
+- [ ] `/api/news`、`/api/stats` 可访问，`/api/stream` 有 keepalive 帧
 - [ ] 静态站 `feed.json` 时间戳在更新
 - [ ] 飞书群能收到分析推送与告警测试
 
@@ -118,19 +119,21 @@ RDS（MySQL 或 PostgreSQL，库名 news_analysis）
 
 | 内容 | 位置 |
 |---|---|
-| 90s 流水线 | ECS `logs/pipeline_1min.log` |
-| 静态站同步 | `/tmp/sync_news_display.log` |
+| 常驻守护（生产调度） | `journalctl -u financial-news-daemon`（journald） |
+| 90s 流水线（备选方案，已弃用） | ECS `logs/pipeline_1min.log` |
+| 静态站同步（独立 sync_loop 时） | `/tmp/sync_news_display.log` |
 | 手动流水线报告 | 项目根 `pipeline_report.txt` |
 | 抽查分析报告 | 项目根 `analysis_report.txt` |
 
 ### 5.2 常用检查命令
 
 ```bash
-systemctl status financial-news        # Web 服务（若已注册 systemd）
-tail -n 200 logs/pipeline_1min.log     # 最近流水线日志
-python check_db.py                     # 库连通性
-python scripts/check_raw_relevance.py  # schema 排查
-pytest tests/ -q                       # 单元测试
+systemctl status financial-news-daemon  # 流水线守护（生产调度）
+journalctl -u financial-news-daemon -n 200   # 最近流水线日志
+systemctl status financial-news         # Web 服务（若已注册 systemd）
+python check_db.py                      # 库连通性
+python scripts/check_raw_relevance.py   # schema 排查
+pytest tests/ -q                        # 单元测试
 ```
 
 ### 5.3 告警语义
@@ -142,8 +145,9 @@ pytest tests/ -q                       # 单元测试
 
 ### 5.4 并发保护
 
-- `run_pipeline_90s_loop.sh` 使用 `flock -n /tmp/pipeline_financial_news.lock`：上一轮未结束时本轮直接跳过，不排队。
-- `run_task.py` 同样使用单实例锁（`utils.acquire_single_instance_lock`，锁文件 `/tmp/financial_news_run_task.lock`）；Windows 上无 flock 时仅告警并继续。
+- **生产调度为常驻 daemon**：单实例由 systemd（单服务）+ `utils.acquire_single_instance_lock`（锁文件 `/tmp/financial_news_daemon.lock`）双重保证；
+- 90s 外壳 `run_pipeline_90s_loop.sh`（备选方案）使用 `flock -n /tmp/pipeline_financial_news.lock`：上一轮未结束时本轮直接跳过，不排队；
+- `run_task.py` 使用单实例锁（`/tmp/financial_news_run_task.lock`）；Windows 上无 flock 时仅告警并继续。
 
 ---
 

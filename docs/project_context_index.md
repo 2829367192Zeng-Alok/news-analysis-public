@@ -185,7 +185,7 @@ Tushare → raw_news → selected_news → news_analysis_detail → 展示/推�
 12. ✅ **根目录与 scripts/ 重复脚本已删除**：仅保留 `scripts/` 版本（`export_recent_news_csv.py` / `run_recent_pipeline_and_export.py`）。
 13. ⚙️ **v2 提示词已接入但默认关闭（决策点 3 选项 A）**：`models` 已含 `confidence`/`uncertain` 可空列（`init_db.py` 自动补列）；`news_analyzer`/`news_filter` 按 `USE_PROMPTS_V2` 切换 `prompts_new` + 宏观基线 System Prompt；**开闸前置条件**（先跑 init_db 建列 + 维护 `config/macro_baseline.yaml`）见 `docs/production_update_ops_2026-09-07.md` §3。
 14. **`raw_news.relevance` 语义复用**：既是“筛选器是否处理过”的状态位，又是“是否相关”的业务值（NULL=未处理）。设计约束，暂不改。
-15. **双调度并存风险（运维约束）**：`pipeline_daemon.py`（常驻轮询）与阿里云 90s 触发（`run_pipeline_90s_loop.sh`）是二选一方案，两者同时启用会双倍消耗筛选/分析 API；切换步骤见 `docs/production_update_ops_2026-09-07.md` §4。
+15. **调度已定为常驻 daemon（2026-09-07）**：生产使用 `pipeline_daemon.py`（systemd 托管，单元模板 `deploy/financial-news-daemon.service`，20s 轮询）；阿里云 90s 定时触发**已弃用**，严禁与 daemon 同时运行（双倍消耗筛选/分析 API）。切换与回退步骤见 `docs/production_update_ops_2026-09-07.md` §4。
 16. **本地开发机无法直连生产库**：PG RDS 仅对 ECS 内网开放（本机 TCP 连接超时已验证）；所有数据库操作（init_db / 归一 / dry-run）必须在 ECS 上执行。
 
 ---

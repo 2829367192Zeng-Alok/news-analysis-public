@@ -259,10 +259,13 @@ Web 与静态展示都只读 `news_analysis_detail`：
 
 ### 6.5 选择建议
 
+> 2026-09-07 决策：**生产调度 = `pipeline_daemon.py`**（systemd 常驻轮询）；`run_pipeline_90s.py` 降级为备选方案（阿里云定时触发已弃用），不再同时运行。
+
 | 场景 | 推荐入口 |
 |---|---|
-| 服务器常驻轮询（推荐） | `pipeline_daemon.py`（systemd） |
-| 服务器定时轮询（无 systemd 时） | `run_pipeline_90s.py` |
+| 生产常驻轮询（✅ 当前采用） | `pipeline_daemon.py`（systemd，单元模板 `deploy/financial-news-daemon.service`） |
+| 运维单轮验证 | `python pipeline_daemon.py --once` |
+| 服务器定时轮询（备选，已弃用） | `run_pipeline_90s.py`（阿里云触发） |
 | 单机定时 | `run_task.py` |
 | 本地联调 | `run_pipeline_manual.py` |
 | 抽查最新数据 | `run_analysis_latest_20.py` |

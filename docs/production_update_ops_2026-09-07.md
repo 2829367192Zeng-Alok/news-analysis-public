@@ -14,7 +14,7 @@
 | 幂等写入 | `news_fetcher` 遇唯一约束冲突降级逐条提交 | 依赖 `uq_raw_content_hash` 唯一索引（§3 步骤 3） |
 | 冗余索引清理 | `init_db.py` 自动 DROP 历史遗留 `ix_*` | pull 后跑一次 init_db 即生效 |
 | `raw_news.content_hash` 唯一索引 | `init_db.py` best-effort 创建 `uq_raw_content_hash` | 库内无重复时自动建成；有重复会提示先归一（§2） |
-| 常驻守护 `pipeline_daemon.py` | 20s 轮询替代阿里云 90s 触发（二选一） | systemd 托管（§4） |
+| 常驻守护 `pipeline_daemon.py` | 20s 轮询（**已确定的生产调度方案**，阿里云 90s 触发已弃用） | systemd 托管（§4） |
 | 实时展示 | Flask `/api/stream`（SSE）+ 前端自动回退轮询；静态站 5s 轮询 | gunicorn 线程配置见 §5 注意事项 |
 
 ---
@@ -70,37 +70,43 @@ USE_PROMPTS_V2=1
 
 ---
 
-## 4. 常驻守护进程部署（替代阿里云 90s 定时触发）
+## 4. 常驻守护进程部署（✅ 已确定为生产调度方案，阿里云 90s 触发已弃用）
 
-**二选一，不要同时开**（两套调度并行会放大筛选/分析 API 消耗）：
+> 2026-09-07 决策：调度采用**服务器内常驻轮询**（`pipeline_daemon.py`，20s/轮），
+> **不再使用阿里云定时任务**。两套调度绝不可同时运行（会双倍消耗筛选/分析 API）。
 
-```ini
-# /etc/systemd/system/financial-news-daemon.service
-[Unit]
-Description=Financial news pipeline daemon
-After=network.target
-
-[Service]
-WorkingDirectory=/root/workspace/project/financial-news-analysis
-EnvironmentFile=/root/workspace/project/financial-news-analysis/.env
-ExecStart=/usr/local/bin/python3 pipeline_daemon.py
-Restart=always
-RestartSec=10
-User=root
-
-[Install]
-WantedBy=multi-user.target
-```
+单元模板已入库：`deploy/financial-news-daemon.service`（无需 EnvironmentFile——
+`config.py` 启动时自动加载工作目录 `.env`，服务与手动运行配置来源一致）。
 
 ```bash
+cd /root/workspace/project/financial-news-analysis
+
+# 0) 前置：确认阿里云定时任务已停用/删除（控制台或 API），避免双调度
+
+# 1) 部署 systemd 单元
+cp deploy/financial-news-daemon.service /etc/systemd/system/financial-news-daemon.service
 systemctl daemon-reload
+
+# 2) （可选但推荐）先单轮验证，再常驻
+python3 pipeline_daemon.py --once
+
+# 3) 启动并自启
 systemctl enable --now financial-news-daemon
-journalctl -u financial-news-daemon -f     # 观察首轮
+
+# 4) 观察
+systemctl status financial-news-daemon
+journalctl -u financial-news-daemon -f          # 期望看到"轮次开始/结束"与 token 统计
 ```
 
-- `--once` 模式用于运维验证：`python pipeline_daemon.py --once`
-- 若保留阿里云 90s 触发（旧方案）：确认 `run_pipeline_90s_loop.sh` 正常即可，**不要**再启动 daemon。
-- 迁移到 daemon 时：先停阿里云定时任务，再 `systemctl start`，观察日志 10 分钟。
+运维要点：
+
+- 改配置（`.env`）后：`systemctl restart financial-news-daemon`；
+- 临时停调度（如数据库维护窗口）：`systemctl stop financial-news-daemon`，维护完 `start`；
+- 调整轮询间隔：`.env` 设 `POLL_INTERVAL_SECONDS`（默认 20）后重启；
+- `--once` 模式用于人工验证，不加单实例锁；
+- 日志在 journald（`journalctl -u financial-news-daemon`）；
+- 回退到阿里云方案（仅当 daemon 方案被放弃时）：`systemctl disable --now financial-news-daemon`
+  后重新启用阿里云定时任务执行 `bash run_pipeline_90s_loop.sh`。
 
 ---
 
@@ -116,6 +122,7 @@ gunicorn -w 2 --threads 8 -b 0.0.0.0:8000 app:app
 
 - 静态站 `web_display/index.html` 已改为 5s 轮询；`scripts/sync_loop.sh` 同步间隔改为 5s。
   daemon 模式下有新分析会主动调 `sync_news_to_display.run_sync()`，sync_loop 可停用（二选一）。
+  当前生产采用 daemon 模式，`sync_loop.sh` 无需运行。
 
 ---
 
