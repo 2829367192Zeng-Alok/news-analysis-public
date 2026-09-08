@@ -143,3 +143,25 @@ gunicorn -w 2 --threads 8 -b 0.0.0.0:8000 app:app
 | 采集批量写入报唯一约束冲突日志 | 正常降级行为（幂等写入）；频繁出现说明上游有重复源，检查 `normalize_content_hash` |
 | `uq_raw_content_hash` 创建失败 | 库内有重复 hash，跑 `--update --dedupe` 后重跑 init_db |
 | SSE 一直 fallback 轮询 | gunicorn 是否用 sync worker（见 §5）；Nginx 反代需 `proxy_buffering off` |
+
+---
+
+## 8. 生产部署执行记录（2026-09-07）
+
+> 以下为 ECS 上实际执行结果，作为部署基线存档。
+
+| 步骤 | 结果 |
+|---|---|
+| `git pull` | 快进至 `9e8578a` |
+| 归一 dry-run | **发现旧 MD5 hash：raw_news 52095 行 / selected_news 11266 行 / news_analysis_detail 16769 行**——证实 S2（双套 hash）在生产真实发生过（backfill 与在线流水线混用所致），并非理论风险 |
+| `--update --dedupe` | 已备份后完成归一与去重 |
+| `init_db.py` | 冗余 `ix_*` 已删、`uq_raw_content_hash` 已创建、`confidence`/`uncertain` 已补列 |
+| `check_db.py` | DB_OK |
+| `pipeline_daemon.py --once` | 采集/筛选/补偿/分析/feed 刷新全链路跑通 |
+| systemd 服务 | `financial-news-daemon` active (running) 且 enabled |
+
+执行中暴露并处理的问题：
+
+1. **DetachedInstanceError（已回流仓库修复）**：`analyze_news` 返回的 ORM 对象在 `session.close()` 后访问属性报错（`sessionmaker` 默认 `expire_on_commit=True`，commit 即过期全部属性）。修复：每条 commit 后 `session.refresh(detail)` + `session.expunge(detail)`，返回对象可安全在会话外使用。对应提交见仓库；**ECS 上的手工补丁与本修复一致，pull 后可直接丢弃本地改动**（`git checkout -- news_analyzer.py && git pull`）。
+2. **飞书推送 403 Forbidden（待处理）**：非代码崩溃，daemon 正常运行。已增强 `webhook_client`（非 2xx 时抛出含飞书响应体的完整错误）并新增 `scripts/check_feishu_webhook.py` 逐 URL 诊断。排查顺序：① 跑检查脚本看具体错误码；② 自定义机器人 403 → 群里机器人是否被移除/停用、Webhook 是否被重置（重置后旧 URL 立即失效）、是否开启签名校验；③ Flow 触发器 403 → Flow 是否停用/重新发布（URL 会变）。
+3. **ECS 服务器本地未跟踪文件**：`web_display/cert_tmp/`（TLS 材料）与 `web_display/credit.zip`——已加入 `.gitignore`，**严禁提交**（仓库含公开远端），保留在服务器本地即可。

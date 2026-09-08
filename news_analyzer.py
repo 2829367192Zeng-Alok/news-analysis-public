@@ -189,6 +189,11 @@ def analyze_news(
             session.add(detail)
             # 修复：每条单独提交，中途异常不丢已成功数据
             session.commit()
+            # 修复 DetachedInstanceError：commit 默认 expire 全部属性，session.close
+            # 后对象脱管，调用方（飞书推送）访问属性会报错。refresh 重载全部属性后
+            # expunge 脱离会话，返回的对象可安全在会话外使用。
+            session.refresh(detail)
+            session.expunge(detail)
             new_details.append(detail)
 
         return new_details

@@ -24,6 +24,10 @@ pipeline_report.txt
 # Alert suppression state (runtime, regenerated)
 .alert_state.json
 
+# Server-local TLS/cert material (ECS 上的证书私钥等，严禁入库——仓库含公开远端)
+web_display/cert_tmp/
+web_display/credit.zip
+
 # Web display runtime output (synced from DB)
 web_display/data/*.json
 web_display/.sync_state.json
@@ -40,3 +44,6 @@ go-cqhttp/session.token
 scripts/debug_*.py
 scripts/test_*.py
 scripts/fix_*.py
+
+# Runtime CSV exports (ECS / local pipelines regenerate from APIs & DB)
+news/*.csv

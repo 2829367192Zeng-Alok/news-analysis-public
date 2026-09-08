@@ -47,7 +47,13 @@ def send_text_message(
         headers={"Content-Type": "application/json; charset=utf-8"},
         timeout=timeout,
     )
-    resp.raise_for_status()
+    # 403 等非 2xx 时带上飞书响应体（内含具体错误码/原因，如签名校验失败、
+    # IP 白名单、机器人被移除、Flow 触发器禁用），便于直接定位配置问题。
+    if not resp.ok:
+        body = resp.text[:500]
+        raise RuntimeError(
+            f"飞书 Webhook HTTP {resp.status_code}: {body}"
+        )
     data = resp.json()
 
     if not isinstance(data, dict):
