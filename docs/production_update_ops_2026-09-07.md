@@ -163,5 +163,5 @@ gunicorn -w 2 --threads 8 -b 0.0.0.0:8000 app:app
 执行中暴露并处理的问题：
 
 1. **DetachedInstanceError（已回流仓库修复）**：`analyze_news` 返回的 ORM 对象在 `session.close()` 后访问属性报错（`sessionmaker` 默认 `expire_on_commit=True`，commit 即过期全部属性）。修复：每条 commit 后 `session.refresh(detail)` + `session.expunge(detail)`，返回对象可安全在会话外使用。对应提交见仓库；**ECS 上的手工补丁与本修复一致，pull 后可直接丢弃本地改动**（`git checkout -- news_analyzer.py && git pull`）。
-2. **飞书推送 403 Forbidden（待处理）**：非代码崩溃，daemon 正常运行。已增强 `webhook_client`（非 2xx 时抛出含飞书响应体的完整错误）并新增 `scripts/check_feishu_webhook.py` 逐 URL 诊断。排查顺序：① 跑检查脚本看具体错误码；② 自定义机器人 403 → 群里机器人是否被移除/停用、Webhook 是否被重置（重置后旧 URL 立即失效）、是否开启签名校验；③ Flow 触发器 403 → Flow 是否停用/重新发布（URL 会变）。
+2. **飞书推送 403 Forbidden（已闭环，无需处理）**：经确认为**有意停用**——Webhook 已下线（用户决策 2026-09-07），非故障。daemon 不依赖推送链路，采集/筛选/分析/展示均正常运行。本次新增的诊断能力保留：`webhook_client` 非 2xx 时抛出含飞书响应体的完整错误、`scripts/check_feishu_webhook.py` 逐 URL 诊断；将来若重新启用推送，直接跑检查脚本即可验证配置。
 3. **ECS 服务器本地未跟踪文件**：`web_display/cert_tmp/`（TLS 材料）与 `web_display/credit.zip`——已加入 `.gitignore`，**严禁提交**（仓库含公开远端），保留在服务器本地即可。

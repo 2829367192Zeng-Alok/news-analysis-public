@@ -53,7 +53,7 @@ RDS（MySQL 或 PostgreSQL，库名 news_analysis）
 | `DOUBAO_MODEL_ID` | 默认模型 / 接入点 ID |
 | `DOUBAO_MODEL_ID_FILTER` / `DOUBAO_MODEL_ID_ANALYZE` | 分阶段模型（留空回退默认） |
 
-### 2.3 飞书推送与告警
+### 2.3 飞书推送与告警（⚠️ 生产当前已停用，见 §8 闭环记录）
 
 | 变量 | 说明 | 默认 |
 |---|---|---|
@@ -96,7 +96,7 @@ RDS（MySQL 或 PostgreSQL，库名 news_analysis）
 - [ ] `systemctl status financial-news-daemon` active，`journalctl -u financial-news-daemon` 有正常轮次
 - [ ] `/api/news`、`/api/stats` 可访问，`/api/stream` 有 keepalive 帧
 - [ ] 静态站 `feed.json` 时间戳在更新
-- [ ] 飞书群能收到分析推送与告警测试
+- [ ] （飞书推送已停用——如重新启用，跑 `scripts/check_feishu_webhook.py` 验证后再勾选此项）
 
 ---
 
