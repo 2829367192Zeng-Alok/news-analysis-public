@@ -95,6 +95,10 @@ class NewsAnalysisDetail(Base):
     # TODO: 历史遗留首字母大写命名，数据库列名保持不变，勿擅自迁移
     Reference = Column(JSON, comment="参考内容列表（历史遗留字段名，勿改列名）")
 
+    # v2 提示词（USE_PROMPTS_V2=1）新增字段；v1 链路为 NULL
+    confidence = Column(Integer, nullable=True, comment="v2: 模型自评置信度 0-100（v1 恒 NULL）")
+    uncertain = Column(Boolean, nullable=True, comment="v2: 路径冲突/低置信标记（v1 恒 NULL）")
+
     interest = Column(Text)
     dollar = Column(Text)
     warrisk = Column(Text)

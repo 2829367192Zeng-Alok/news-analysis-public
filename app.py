@@ -3,10 +3,12 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime
+import json
 import os
+import time
 from typing import Generator, List, Dict, Any, Optional
 
-from flask import Flask, jsonify, request, render_template
+from flask import Flask, Response, jsonify, request, render_template
 
 from models import NewsAnalysisDetail, get_db_session
 
@@ -109,6 +111,8 @@ def create_app() -> Flask:
                         "longtime": n.longtime,
                         "insight": n.insight,
                         "conclusion": n.conclusion,
+                        "confidence": n.confidence,
+                        "uncertain": n.uncertain,
                     }
                 )
             return jsonify({"items": data, "count": len(data)})
@@ -153,6 +157,8 @@ def create_app() -> Flask:
                 "longtime": item.longtime,
                 "insight": item.insight,
                 "conclusion": item.conclusion,
+                "confidence": item.confidence,
+                "uncertain": item.uncertain,
             }
             return jsonify(data)
 
@@ -173,6 +179,49 @@ def create_app() -> Flask:
                     else None,
                 }
             )
+
+    @app.route("/api/stream")
+    def api_stream():
+        """
+        SSE 实时推送：服务端每 5 秒轮询一次数据库 MAX(id)/COUNT(*)，
+        变化时立即推送 stats + 最新明细；无变化仅发送 keepalive 注释。
+        前端无需再定时全量拉取，有新分析结果即可近实时上屏。
+        """
+        from sqlalchemy import select, func
+
+        def _snapshot() -> Dict[str, Any]:
+            with _db_session() as session:
+                total = session.scalar(select(func.count(NewsAnalysisDetail.id))) or 0
+                max_id = session.scalar(select(func.max(NewsAnalysisDetail.id)))
+                latest_time = session.scalar(select(func.max(NewsAnalysisDetail.news_datetime)))
+                return {
+                    "total_news": int(total),
+                    "max_id": int(max_id) if max_id else 0,
+                    "latest_news_time": latest_time.isoformat() if isinstance(latest_time, datetime) else None,
+                }
+
+        def generate():
+            last_signature = None
+            while True:
+                try:
+                    snap = _snapshot()
+                    signature = (snap["max_id"], snap["total_news"])
+                    if signature != last_signature:
+                        payload = {"type": "update", **snap}
+                        yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                        last_signature = signature
+                    else:
+                        yield ": keepalive\n\n"
+                except GeneratorExit:
+                    raise
+                except Exception:
+                    yield f"data: {json.dumps({'type': 'error'})}\n\n"
+                time.sleep(5)
+
+        resp = Response(generate(), mimetype="text/event-stream")
+        resp.headers["Cache-Control"] = "no-cache"
+        resp.headers["X-Accel-Buffering"] = "no"
+        return resp
 
     return app
 

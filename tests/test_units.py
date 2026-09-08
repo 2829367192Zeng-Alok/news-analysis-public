@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-纯函数级单元测试：筛选/分析字段规范化、token 汇总、告警抑制、ISO 时间解析。
+纯函数级单元测试：筛选/分析字段规范化、token 汇总、告警抑制、ISO 时间解析、v2 提示词。
 不依赖真实 API / 数据库（mock 或纯内存），可在无密钥环境运行。
 """
 from __future__ import annotations
@@ -24,6 +24,64 @@ def test_first_dict_from_list():
     assert _first_dict_from_list([1, [2, {"b": 2}]]) == {"b": 2}
     assert _first_dict_from_list([1, [2, 3]]) == {}
     assert _first_dict_from_list([]) == {}
+
+
+# ---------- prompts_new（v2 提示词，未开开关也应可安全加载） ----------
+
+def test_v2_templates_have_required_placeholders():
+    import prompts_new
+
+    # 两个模板都必须能被 str.format(title=..., content=...) 消费
+    user = prompts_new.ANALYZE_PROMPT_TEMPLATE.format(title="T", content="C")
+    assert "T" in user and "C" in user
+    user_f = prompts_new.FILTER_PROMPT_TEMPLATE.format(title="T", content="C")
+    assert "T" in user_f and "C" in user_f
+
+
+def test_v2_filter_template_includes_v2_fields():
+    import prompts_new
+
+    # v2 分析输出要求包含 confidence / uncertain（v1 没有）
+    assert '"confidence"' in prompts_new.ANALYZE_PROMPT_TEMPLATE
+    assert '"uncertain"' in prompts_new.ANALYZE_PROMPT_TEMPLATE
+
+
+def test_format_system_prompt_with_empty_baseline():
+    from macro_baseline import EMPTY_MACRO_BASELINE
+    from prompts_new import format_system_prompt
+
+    text = format_system_prompt(EMPTY_MACRO_BASELINE)
+    # 占位符全部被替换，不应残留 str.format 花括号
+    assert "{" not in text and "}" not in text
+    assert "宏观基线" in text
+
+
+def test_format_system_prompt_with_values():
+    from prompts_new import format_system_prompt
+
+    baseline = {
+        "baseline_date": "2026-09-07",
+        "fed_stance": "偏鹰",
+        "real_rate_10y": 2.1,
+        "dxy": 103.5,
+        "gold_price": 2650,
+        "sentiment_momentum": 60,
+        "geo_risk_level": "中",
+        "manual_context": "无",
+    }
+    text = format_system_prompt(baseline)
+    assert "2026-09-07" in text and "偏鹰" in text and "103.5" in text
+
+
+# ---------- news_filter 默认模板选择（未开 v2 时保持 v1） ----------
+
+def test_filter_template_defaults_to_v1():
+    from news_filter import _get_filter_template
+    from prompts import FILTER_PROMPT_TEMPLATE
+
+    # 未设置 USE_PROMPTS_V2 时必须回落 v1，保证生产行为不变
+    assert _get_filter_template() is FILTER_PROMPT_TEMPLATE
+
 
 
 # ---------- news_analyzer 规范化 ----------

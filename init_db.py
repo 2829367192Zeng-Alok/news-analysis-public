@@ -101,6 +101,27 @@ def main():
         except Exception as e:
             print(f"检查/更新 raw_news.relevance 时: {e}")
 
+        # 3.5) raw_news.content_hash 唯一约束（L4 硬兜底）
+        # - news_fetcher 的幂等写入兜底以该约束为前提；
+        # - 库内尚有重复 hash 时创建会失败：非致命，按提示先执行
+        #   python scripts/normalize_content_hash.py --dedupe 后重跑本脚本即可。
+        try:
+            if not _index_exists(inspector, "raw_news", "uq_raw_content_hash"):
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX uq_raw_content_hash ON raw_news (content_hash)"
+                ))
+                conn.commit()
+                print("已创建唯一索引 uq_raw_content_hash（raw_news.content_hash）")
+            inspector = inspect(conn)
+        except Exception as e:
+            conn.rollback()
+            print(
+                "创建 uq_raw_content_hash 失败（通常因库内存在重复 content_hash，非致命）：\n"
+                f"  {e}\n"
+                "  请先执行: python scripts/normalize_content_hash.py --dry-run 然后 --update --dedupe，"
+                "再重跑本脚本。"
+            )
+
         # 4) news_analysis_detail 旧表补列
         detail_columns = [
             ("interest_direction", "interest_direction", "INTEGER NULL"),
@@ -125,6 +146,9 @@ def main():
             ("longtime", "longtime", "TEXT NULL"),
             ("insight", "insight", "TEXT NULL"),
             ("conclusion", "conclusion", "TEXT NULL"),
+            # v2 提示词字段（USE_PROMPTS_V2=1 时使用，必须先补列再开 v2）
+            ("confidence", "confidence", "INTEGER NULL"),
+            ("uncertain", "uncertain", "BOOLEAN NULL"),
         ]
         for check_name, ddl_name, col_spec in detail_columns:
             try:

@@ -16,6 +16,15 @@ from prompts import FILTER_PROMPT_TEMPLATE
 from utils import now_beijing_naive
 
 
+def _get_filter_template() -> str:
+    """按开关选择筛选提示词：v2（保守门控，宁可放行）或 v1。"""
+    if settings.doubao.use_prompts_v2:
+        import prompts_new
+
+        return prompts_new.FILTER_PROMPT_TEMPLATE
+    return FILTER_PROMPT_TEMPLATE
+
+
 def _first_dict_from_list(lst: list) -> dict:
     for x in lst:
         if isinstance(x, dict):
@@ -48,7 +57,7 @@ def call_doubao_filter_api(
         raise RuntimeError("未配置 DOUBAO_API_KEY，请在 config 或环境变量中设置")
     default = {"relevance": False, "direction": 0, "impact": 0}
     try:
-        tpl = filter_template if filter_template is not None else FILTER_PROMPT_TEMPLATE
+        tpl = filter_template if filter_template is not None else _get_filter_template()
         user_text = tpl.format(title=title, content=(content or "")[:8000])
         model_filter = (settings.doubao.model_id_filter or settings.doubao.model_id or "").strip() or None
         if token_accumulator is not None:

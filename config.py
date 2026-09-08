@@ -144,6 +144,13 @@ class DoubaoConfig:
     model_id_filter: str = os.getenv("DOUBAO_MODEL_ID_FILTER", "")
     # 详细分析阶段使用的模型；不设或空则用 model_id
     model_id_analyze: str = os.getenv("DOUBAO_MODEL_ID_ANALYZE", "")
+    # 提示词版本开关：true=使用 prompts_new（v2：宏观基线 System Prompt + confidence/uncertain，
+    # 需先在数据库执行 init_db.py 补 confidence/uncertain 两列）；默认 false 用 prompts（v1）
+    use_prompts_v2: bool = os.getenv("USE_PROMPTS_V2", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 
 class Settings:

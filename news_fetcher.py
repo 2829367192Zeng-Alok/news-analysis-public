@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set, Tuple
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from config import settings
 from models import RawNews, get_db_session
@@ -229,8 +230,24 @@ def fetch_latest_news(
                 )
             )
         if new_items:
-            session.add_all(new_items)
-            session.commit()
+            try:
+                session.add_all(new_items)
+                session.commit()
+            except IntegrityError:
+                # 唯一约束（uq_raw_content_hash）冲突兜底：并发/重复写入时逐条提交，
+                # 跳过已存在行，而不是整批回滚丢失本批其余数据。
+                session.rollback()
+                logger.warning("批量写入触发唯一约束冲突，降级为逐条幂等写入")
+                inserted: List[RawNews] = []
+                for item in new_items:
+                    session.add(item)
+                    try:
+                        session.commit()
+                        inserted.append(item)
+                    except IntegrityError:
+                        session.rollback()
+                        logger.info("跳过已存在内容: %s", item.title[:40])
+                new_items = inserted
             new_hashes = [r.content_hash for r in new_items]
             return new_items, new_hashes
         return [], []

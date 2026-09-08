@@ -178,13 +178,15 @@ async function loadDetail(id) {
   }
 }
 
-// 自动刷新：失败时指数退避（15s → 最大 120s），成功后复位
+// ── 近实时更新 ─────────────────────────────────────────────────────
+// 首选 SSE（/api/stream，服务端 5s 检测变化，有新数据立即推送）；
+// SSE 不可用时回退为 5s 定时轮询。
+
 let refreshFailures = 0;
-const BASE_REFRESH_MS = 15000;
-const MAX_REFRESH_MS = 120000;
+const FALLBACK_POLL_MS = 5000;
 
 function nextRefreshDelay() {
-  const delay = Math.min(BASE_REFRESH_MS * Math.pow(2, refreshFailures), MAX_REFRESH_MS);
+  const delay = Math.min(FALLBACK_POLL_MS * Math.pow(2, refreshFailures), 60000);
   return delay;
 }
 
@@ -197,14 +199,44 @@ async function refreshTick() {
   }
 }
 
-function setupAutoRefresh() {
+function startSse() {
+  try {
+    const es = new EventSource("/api/stream");
+    es.onmessage = (ev) => {
+      try {
+        const payload = JSON.parse(ev.data);
+        if (payload && payload.type === "update") {
+          loadStats();
+          loadNewsList();
+        }
+      } catch (_) { /* 忽略解析失败，等待下一条 */ }
+    };
+    es.onerror = () => {
+      // 连接断开：EventSource 会自动重连；若浏览器报错则关闭并退化轮询
+      es.close();
+      startFallbackPolling();
+    };
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function startFallbackPolling() {
   loadStats();
   loadNewsList();
-  // 首次立即执行，之后按退避策略轮询
   setTimeout(async function tick() {
     await refreshTick();
     setTimeout(tick, nextRefreshDelay());
   }, nextRefreshDelay());
+}
+
+function setupAutoRefresh() {
+  loadStats();
+  loadNewsList();
+  if (typeof EventSource === "undefined" || !startSse()) {
+    startFallbackPolling();
+  }
 }
 
 window.addEventListener("DOMContentLoaded", setupAutoRefresh);

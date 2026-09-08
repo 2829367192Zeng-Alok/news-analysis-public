@@ -16,6 +16,18 @@ from prompts import ANALYZE_PROMPT_TEMPLATE
 from utils import now_beijing_naive
 
 
+def _load_v2_prompts():
+    """按开关加载 v2 提示词与宏观基线 System Prompt；未开 v2 返回 (None, None)。"""
+    if not settings.doubao.use_prompts_v2:
+        return None, None
+    import prompts_new
+    from macro_baseline import load_macro_baseline
+
+    baseline = load_macro_baseline()
+    system_prompt = prompts_new.format_system_prompt(baseline)
+    return prompts_new.ANALYZE_PROMPT_TEMPLATE, system_prompt
+
+
 def _norm_list(v: Any) -> List[str] | None:
     if v is None:
         return None
@@ -60,7 +72,13 @@ def call_doubao_analyze_api(
         raise RuntimeError("未配置 DOUBAO_API_KEY，请在 config 或环境变量中设置")
 
     analyze_timeout = 240
-    tpl = analyze_template if analyze_template is not None else ANALYZE_PROMPT_TEMPLATE
+    v2_template, v2_system = _load_v2_prompts()
+    if analyze_template is not None:
+        tpl = analyze_template
+    else:
+        tpl = v2_template if v2_template is not None else ANALYZE_PROMPT_TEMPLATE
+    if system_prompt is None and settings.doubao.use_prompts_v2:
+        system_prompt = v2_system
     user_text = tpl.format(title=title, content=(content or "")[:12000])
     model_analyze = (settings.doubao.model_id_analyze or settings.doubao.model_id or "").strip() or None
     # max_retries=0：分析阶段不在 client 层重试（耗时长、token 贵），由上层决策
@@ -160,6 +178,12 @@ def analyze_news(
                 longtime=_norm_str(result.get("longtime")),
                 insight=_norm_str(result.get("insight")),
                 conclusion=_norm_str(result.get("conclusion")),
+                confidence=_norm_int(result.get("confidence"), default=0)
+                if settings.doubao.use_prompts_v2
+                else None,
+                uncertain=bool(result.get("uncertain"))
+                if settings.doubao.use_prompts_v2 and result.get("uncertain") is not None
+                else None,
                 content_hash=item.content_hash,
             )
             session.add(detail)
