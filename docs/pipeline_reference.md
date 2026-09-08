@@ -231,7 +231,20 @@ Web 与静态展示都只读 `news_analysis_detail`：
 - 每阶段有耗时与 token 统计；
 - 无新数据时直接跳过本批筛选。
 
-### 6.3 `run_pipeline_manual.py`
+### 6.3 `pipeline_daemon.py`（常驻守护，2026-09-07 新增）
+
+适用场景：
+
+- 替代阿里云 90 秒触发，常驻轮询（默认 `POLL_INTERVAL_SECONDS=20`）。
+
+特点：
+
+- 每轮流程与 90s 版一致：采集（窗口默认 2 分钟，略大于轮询间隔防漏）→ 本批筛选 → 滞留补偿 → 按批分析 → 飞书推送 → 健康检查；
+- **有新分析结果时主动调用 `sync_news_to_display.run_sync()`** 刷新静态站（近实时）；
+- systemd 托管（单实例锁 `financial_news_daemon`）；`--once` 用于运维验证；
+- **与阿里云 90s 触发二选一**，同时启用会双倍消耗 API。
+
+### 6.4 `run_pipeline_manual.py`
 
 适用场景：
 
@@ -244,11 +257,12 @@ Web 与静态展示都只读 `news_analysis_detail`：
 - 输出 `pipeline_report.txt`；
 - 适合排查历史积压。
 
-### 6.4 选择建议
+### 6.5 选择建议
 
 | 场景 | 推荐入口 |
 |---|---|
-| 服务器定时轮询 | `run_pipeline_90s.py` |
+| 服务器常驻轮询（推荐） | `pipeline_daemon.py`（systemd） |
+| 服务器定时轮询（无 systemd 时） | `run_pipeline_90s.py` |
 | 单机定时 | `run_task.py` |
 | 本地联调 | `run_pipeline_manual.py` |
 | 抽查最新数据 | `run_analysis_latest_20.py` |

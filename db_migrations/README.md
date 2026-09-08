@@ -21,6 +21,7 @@ db_migrations/
 
 | 日期 | 目录 | 内容 | 状态 |
 |---|---|---|---|
-| 2026-09-07 | `scripts/normalize_content_hash.py` | content_hash 统一 blake2b 的数据归一（见 W1/S2，先 `--dry-run` 后 `--update`，可选 `--dedupe`） | 脚本待执行 |
+| 2026-09-07 | `scripts/normalize_content_hash.py` | content_hash 统一 blake2b 的数据归一（先 `--dry-run` 后 `--update`，可选 `--dedupe`） | 脚本就绪，**生产未执行** |
+| 2026-09-07 | `init_db.py`（代码内置，非 SQL 目录） | ① 清理 `ix_*` 冗余索引；② best-effort 创建 `uq_raw_content_hash` 唯一索引；③ v2 补 `confidence`/`uncertain` 两列 | 代码就绪，**生产 pull 后需跑一次 init_db** |
 
-> 注：`scripts/normalize_content_hash.py` 以脚本形式提供（涉及跨表级联与去重），故未拆成纯 SQL；其他纯结构变更按上方目录约定落盘。
+> 注：`normalize_content_hash.py` 以脚本形式提供（涉及跨表级联与去重），故未拆成纯 SQL；其他纯结构变更按上方目录约定落盘。执行顺序与回滚见 `docs/production_update_ops_2026-09-07.md` §2。

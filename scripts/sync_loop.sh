@@ -5,5 +5,5 @@ cd /root/workspace/project/financial-news-analysis || exit 1
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 while true; do
   "$PYTHON_BIN" sync_news_to_display.py --no-change >> /tmp/sync_news_display.log 2>&1
-  sleep 10
+  sleep 5
 done

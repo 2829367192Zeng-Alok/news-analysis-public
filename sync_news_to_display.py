@@ -147,21 +147,8 @@ def save_state(total_news: int, max_id: int):
     )
 
 
-def main():
-    parser = argparse.ArgumentParser(description="同步 news_analysis_detail 到静态展示数据")
-    parser.add_argument(
-        "--no-change",
-        action="store_true",
-        help="仅当有新数据时才写入 feed.json（根据 total_news 与 max_id 判断）",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=100,
-        help="导出列表与详情的最大条数（默认 100）",
-    )
-    args = parser.parse_args()
-
+def run_sync(no_change: bool = False, limit: int = 100) -> int:
+    """同步核心逻辑（供 CLI 与 pipeline_daemon 复用）。返回 0=成功/跳过，1=写入失败。"""
     # 确保从项目根加载 config/models
     if str(PROJECT_ROOT) not in sys.path:
         sys.path.insert(0, str(PROJECT_ROOT))
@@ -172,7 +159,7 @@ def main():
 
     session = get_db_session()
     try:
-        feed = build_feed(session, limit=args.limit)
+        feed = build_feed(session, limit=limit)
     finally:
         session.close()
 
@@ -180,7 +167,7 @@ def main():
     max_id = max((x["id"] for x in feed["items"]), default=0)
     last = get_last_state()
 
-    if args.no_change and last is not None:
+    if no_change and last is not None:
         if last.get("total_news") == total_news and last.get("max_id") == max_id:
             logger.info("无新数据，跳过写入 (total=%s, max_id=%s)", total_news, max_id)
             return 0
@@ -195,9 +182,26 @@ def main():
     return 0
 
 
-if __name__ == "__main__":
+def main():
+    parser = argparse.ArgumentParser(description="同步 news_analysis_detail 到静态展示数据")
+    parser.add_argument(
+        "--no-change",
+        action="store_true",
+        help="仅当有新数据时才写入 feed.json（根据 total_news 与 max_id 判断）",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        help="导出列表与详情的最大条数（默认 100）",
+    )
+    args = parser.parse_args()
     try:
-        sys.exit(main())
-    except Exception as e:
-        logger.exception("同步失败: %s", e)
+        sys.exit(run_sync(no_change=args.no_change, limit=args.limit))
+    except Exception:
+        logger.exception("同步失败")
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

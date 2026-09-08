@@ -16,7 +16,7 @@ Tushare（华尔街见闻 / 新浪财经）
   → Flask 动态站 / Nginx 静态展示站 / 飞书群推送
 ```
 
-- 定时任务每 90 秒触发一轮（`run_pipeline_90s_loop.sh`，flock 防并发）；
+- 定时任务每 90 秒触发一轮（`run_pipeline_90s_loop.sh`，flock 防并发）；或改用常驻守护 `python pipeline_daemon.py`（20s 轮询，**二选一**，见 `docs/production_update_ops_2026-09-07.md`）；
 - 三张表以 `content_hash` 关联，流水线可安全重跑；
 - 飞书双链路：分析结果推送 + 停摆/API 异常告警（含恢复通知与告警抑制）。
 
@@ -58,8 +58,8 @@ pytest tests/ -q                        # 单元测试
 | 1 | 上传仓库到 ECS `/root/workspace/project/financial-news-analysis` |
 | 2 | `pip install -r requirements.txt`，配置 `.env`（**DB_HOST 用 RDS 内网地址**） |
 | 3 | `python init_db.py` 初始化表结构 |
-| 4 | 阿里云定时任务每 90 秒执行 `bash run_pipeline_90s_loop.sh` |
-| 5 | Web：`gunicorn -w 2 -b 0.0.0.0:8000 "app:app"`（建议 systemd 守护） |
+| 4 | 调度二选一：阿里云定时每 90 秒执行 `bash run_pipeline_90s_loop.sh`，**或** systemd 托管 `python pipeline_daemon.py`（勿同时启用） |
+| 5 | Web：`gunicorn -w 2 --threads 8 -b 0.0.0.0:8000 app:app`（SSE 需线程模式；建议 systemd 守护） |
 | 6 | 静态站：部署 `web_display/` 到 Nginx，常驻 `scripts/sync_loop.sh` 同步 |
 
 ### 数据库切换（MySQL → PostgreSQL）

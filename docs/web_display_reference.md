@@ -51,7 +51,7 @@
 - `templates/index.html`：单页布局（左列表 + 右详情）；
 - `static/js/main.js`：
   - `loadStats()` / `loadNewsList()` / `loadDetail(id)`；
-  - 15 秒自动刷新列表与统计；
+  - 近实时更新：优先 SSE（`GET /api/stream`，服务端 5s 检测库变化即推送），不可用时回退 5s 轮询（指数退避至 60s）；
   - 点击列表项加载详情；
   - 方向徽章（利好 / 利空 / 中性 + 强度）；
   - 关键词以 pill 标签展示。

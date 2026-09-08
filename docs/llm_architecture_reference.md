@@ -104,20 +104,23 @@ chat_with_usage(model=None, user_text="", timeout=60, max_retries=3, system_text
 
 ## 5. 提示词体系
 
-### 5.1 `prompts.py`（当前运行版）
+### 5.1 `prompts.py`（v1，默认运行版）
 
 - `FILTER_PROMPT_TEMPLATE`：筛选阶段，输出 `{relevance, direction, impact}`；
-- `ANALYZE_PROMPT_TEMPLATE`：详细分析阶段，输出与 `news_analysis_detail` 表对齐的 32 字段 JSON。
+- `ANALYZE_PROMPT_TEMPLATE`：详细分析阶段，输出与 `news_analysis_detail` 表对齐的 25 字段 JSON。
 
-### 5.2 `prompts_new.py`（v2 候选版）
+### 5.2 `prompts_new.py`（v2，`USE_PROMPTS_V2` 控制，默认关闭）
 
-- `FILTER_PROMPT_TEMPLATE`：更保守的筛选门控提示词；
+- `FILTER_PROMPT_TEMPLATE`：更宽松的筛选门控（"宁可放行存疑新闻"）；
 - `SYSTEM_PROMPT_TEMPLATE`：宏观基线注入的 System Prompt；
-- 配合 `macro_baseline.py` 使用，将人工维护的宏观基线（美联储立场、实际利率、美元指数、金价、情绪动量、地缘风险等级、人工研判层）注入上下文。
+- 配合 `macro_baseline.py` 使用，将人工维护的宏观基线（美联储立场、实际利率、美元指数、金价、情绪动量、地缘风险等级、人工研判层）注入上下文；
+- 分析输出额外包含 `confidence`（0–100 自评置信度）与 `uncertain`（路径冲突/低置信标记），落库至 `news_analysis_detail` 两个可空列。
+
+**切换机制（2026-09-07 接入）**：`news_filter.call_doubao_filter_api` / `news_analyzer.call_doubao_analyze_api` 按 `settings.doubao.use_prompts_v2`（环境变量 `USE_PROMPTS_V2`）选择模板与 System Prompt；关闭时行为与 v1 完全一致。**开闸前置条件**：先跑 `init_db.py` 建列 + 维护 `config/macro_baseline.yaml`，详见 `docs/production_update_ops_2026-09-07.md` §3。
 
 ### 5.3 提示词 A/B 对比
 
-`scripts/compare_prompts_on_selected_csv.py` 支持在同一批 CSV 上对比旧/新提示词效果，修改提示词前建议先做一次 A/B。
+`scripts/compare_prompts_on_selected_csv.py` 支持在同一批 CSV 上对比旧/新提示词效果，修改提示词前建议先做一次 A/B；`tests/run_prompt_compare.py` 可在整批真实新闻上离线对比 v1/v2 的筛选与分析差异（含 token 成本）。
 
 ---
 

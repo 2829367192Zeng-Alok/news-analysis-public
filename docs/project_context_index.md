@@ -174,17 +174,19 @@ Tushare → raw_news → selected_news → news_analysis_detail → 展示/推�
 1. ✅ **C1（S2）双套 content_hash 已统一为 blake2b**：`utils.py` 为唯一实现，`news_fetcher.py` 改为导入；旧 MD5 保留为 `compute_content_hash_legacy_md5` 仅供迁移对比。历史库内 MD5 行需执行 `scripts/normalize_content_hash.py --update`（先 `--dry-run`）归一（**尚未在生产库执行**）。
 2. ✅ **C2（S1）`run_pipeline_once.py` 已删除**（2026-09-07），功能由 `run_pipeline_manual.py` 覆盖。
 3. ✅ **C3（S3）`check_db.py` 已重写**为方言无关的 SQLAlchemy `SELECT 1` 连通性检查，MySQL/PostgreSQL 通用。
-4. ✅ **C4（S4）测试套件已修复**：断言改为 `tushare_src == "sina"`（`source_id` 仍为 `"新浪财经"`），pytest 现 13 passed。
+4. ✅ **C4（S4）测试套件已修复**：断言改为 `tushare_src == "sina"`（`source_id` 仍为 `"新浪财经"`），pytest 现 18 passed。
 5. ✅ **C5（S5）Flask 站 XSS 已修复**：`static/js/main.js` 新增 `escapeHtml`，所有模型输出字段入库前转义。
 6. ✅ **C6（S6）90s 流水线已限制分析范围**：`analyze_news` 新增 `only_content_hashes` 参数；loop.sh `TIMEOUT_SEC` 由 85 提到 240，与单条分析超时对齐；并发由 flock 兜底。
 7. ✅ **C7（L1）时间口径已统一**：`run_analysis_latest_20.py` 改用 `now_beijing_naive()`。
 8. ✅ **C8（L3）冗余索引已清理**：`models.py` 移除列级 `index=True`；`init_db.py` 幂等 DROP 历史遗留 `ix_*` 索引。
-9. ⚠️ **C9（L4）`content_hash` 唯一约束未加**（破坏性 DB 变更，需先跑 `normalize_content_hash.py --dedupe` 清理历史重复，待用户批准）；并发侧已加固：`run_task.py` 加 flock、90s 循环本有 flock。
+9. ✅ **C9（L4）`content_hash` 唯一约束已落地**（2026-09-07）：`init_db.py` 自动创建 `uq_raw_content_hash`（best-effort，库内有重复时提示先归一）；`news_fetcher.py` 配套幂等写入（冲突降级逐条提交）。**生产执行顺序见 `docs/production_update_ops_2026-09-07.md` §2：先 `--dry-run` 扫描 → 按需 `--update --dedupe` → 再跑 init_db。**
 10. ✅ **C10（R5）依赖已补齐**：`requirements.txt` 加 `gunicorn`；新增 `requirements-dev.txt`（pytest/ruff）；`.alert_state.json` 已入 `.gitignore`。
 11. **`Reference` 列名**：历史遗留首字母大写，模型输出、ORM、DB 三方一致，勿单方面改名（暂不迁移，保持 TODO）。
 12. ✅ **根目录与 scripts/ 重复脚本已删除**：仅保留 `scripts/` 版本（`export_recent_news_csv.py` / `run_recent_pipeline_and_export.py`）。
-13. **`prompts_new.py`/`macro_baseline.py` 未接入生产链路**：当前 `news_analyzer.py` 仍用 `prompts.py`；v2 机制（基线注入 + confidence/uncertain 字段）已就绪但未切换，且 v2 新增字段在表中无对应列。切换属 W4.1 可选工作流，需另行批准。
+13. ⚙️ **v2 提示词已接入但默认关闭（决策点 3 选项 A）**：`models` 已含 `confidence`/`uncertain` 可空列（`init_db.py` 自动补列）；`news_analyzer`/`news_filter` 按 `USE_PROMPTS_V2` 切换 `prompts_new` + 宏观基线 System Prompt；**开闸前置条件**（先跑 init_db 建列 + 维护 `config/macro_baseline.yaml`）见 `docs/production_update_ops_2026-09-07.md` §3。
 14. **`raw_news.relevance` 语义复用**：既是“筛选器是否处理过”的状态位，又是“是否相关”的业务值（NULL=未处理）。设计约束，暂不改。
+15. **双调度并存风险（运维约束）**：`pipeline_daemon.py`（常驻轮询）与阿里云 90s 触发（`run_pipeline_90s_loop.sh`）是二选一方案，两者同时启用会双倍消耗筛选/分析 API；切换步骤见 `docs/production_update_ops_2026-09-07.md` §4。
+16. **本地开发机无法直连生产库**：PG RDS 仅对 ECS 内网开放（本机 TCP 连接超时已验证）；所有数据库操作（init_db / 归一 / dry-run）必须在 ECS 上执行。
 
 ---
 

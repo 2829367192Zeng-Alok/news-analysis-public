@@ -119,6 +119,8 @@
   - `insight`
   - `conclusion`
 - `content_hash`
+- `confidence`（可空；v2 提示词输出 `USE_PROMPTS_V2=1` 时写入，v1 恒 NULL）
+- `uncertain`（可空布尔；v2 提示词输出时写入，v1 恒 NULL）
 
 设计说明：
 
